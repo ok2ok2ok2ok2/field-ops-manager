@@ -1,91 +1,54 @@
 /**
- * 設備管理 API (Supabase)
- * 版本: v1.1
- * 日期: 2025-03-04
+ * 設備管理 API — 離線版
+ * 版本: v2.0
+ * 日期: 2026-03-10
  * 檔案: src/api/devices.js
  *
- * v1.1 修改：
- *  - createDevice / updateDevice 支援 client_id
- *  - 新增 getDevicesByClientId()
+ * v2.0：改為讀寫 IndexedDB
  */
 
-import { supabase } from '../lib/supabase'
+import { getAll, getOne, create, update, remove } from '../lib/offlineApi'
+
+const TABLE = 'devices'
 
 /** 讀取所有設備 */
 export async function getDevices() {
-  const { data, error } = await supabase
-    .from('devices')
-    .select('*')
-    .order('updated_at', { ascending: false })
-
-  if (error) throw error
-  return data
+  return await getAll(TABLE, {}, { field: 'updated_at', ascending: false })
 }
 
 /** 讀取單一設備 */
 export async function getDevice(id) {
-  const { data, error } = await supabase
-    .from('devices')
-    .select('*')
-    .eq('id', id)
-    .single()
-
-  if (error) throw error
-  return data
+  return await getOne(TABLE, id)
 }
 
 /** 依客戶 ID 讀取設備 */
 export async function getDevicesByClientId(clientId) {
-  const { data, error } = await supabase
-    .from('devices')
-    .select('*')
-    .eq('client_id', clientId)
-    .order('device_code', { ascending: true })
-
-  if (error) throw error
-  return data || []
+  const data = await getAll(TABLE, { client_id: clientId })
+  return data.sort((a, b) =>
+    (a.device_code || '').localeCompare(b.device_code || '')
+  )
 }
 
 /** 新增設備 */
 export async function createDevice(device) {
-  const { data, error } = await supabase
-    .from('devices')
-    .insert({
-      name: device.name,
-      device_code: device.device_code || null,
-      model: device.model || null,
-      location: device.location || null,
-      purchase_date: device.purchase_date || null,
-      status: device.status || '正常',
-      notes: device.notes || null,
-      client_id: device.client_id || null,
-    })
-    .select()
-    .single()
-
-  if (error) throw error
-  return data
+  return await create(TABLE, {
+    name: device.name,
+    device_code: device.device_code || null,
+    model: device.model || null,
+    location: device.location || null,
+    purchase_date: device.purchase_date || null,
+    status: device.status || '正常',
+    notes: device.notes || null,
+    client_id: device.client_id || null,
+  })
 }
 
 /** 更新設備 */
 export async function updateDevice(id, updates) {
-  const { data, error } = await supabase
-    .from('devices')
-    .update(updates)
-    .eq('id', id)
-    .select()
-    .single()
-
-  if (error) throw error
-  return data
+  return await update(TABLE, id, updates)
 }
 
 /** 刪除設備 */
 export async function deleteDevice(id) {
-  const { error } = await supabase
-    .from('devices')
-    .delete()
-    .eq('id', id)
-
-  if (error) throw error
+  await remove(TABLE, id)
 }

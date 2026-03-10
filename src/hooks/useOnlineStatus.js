@@ -1,0 +1,27 @@
+/**
+ * 網路狀態偵測 Hook
+ * 版本: v1.0
+ * 日期: 2026-03-10
+ * 檔案: src/hooks/useOnlineStatus.js
+ */
+
+import { useState, useEffect } from 'react'
+
+export function useOnlineStatus() {
+  const [isOnline, setIsOnline] = useState(navigator.onLine)
+
+  useEffect(() => {
+    const goOnline = () => setIsOnline(true)
+    const goOffline = () => setIsOnline(false)
+
+    window.addEventListener('online', goOnline)
+    window.addEventListener('offline', goOffline)
+
+    return () => {
+      window.removeEventListener('online', goOnline)
+      window.removeEventListener('offline', goOffline)
+    }
+  }, [])
+
+  return isOnline
+}

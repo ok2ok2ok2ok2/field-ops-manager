@@ -1,168 +1,134 @@
 /**
- * 工作項目 API (Supabase)
- * 版本: v1.0
- * 日期: 2026-03-06
+ * 工作項目 API — 離線版
+ * 版本: v2.0
+ * 日期: 2026-03-10
  * 檔案: src/api/workItems.js
  *
- * 說明：work_items 為看板主角，帶 status/priority
- *       可獨立存在，也可掛在 project 或 daily_log 底下
+ * v2.0：改為讀寫 IndexedDB
+ *       關聯 project 資料從本地 projects 表取得
  */
 
-import { supabase } from '../lib/supabase'
+import { getAll, getOne, create, update, remove } from '../lib/offlineApi'
+import db from '../lib/offlineDb'
+
+const TABLE = 'work_items'
+
+/* ========== 內部工具：附加 project 資訊 ========== */
+
+async function attachProjects(items) {
+  if (items.length === 0) return items
+  const projectIds = [...new Set(items.map((i) => i.project_id).filter(Boolean))]
+  const projects = projectIds.length > 0
+    ? await Promise.all(projectIds.map((id) => db.projects.get(id)))
+    : []
+  const projectMap = {}
+  projects.filter(Boolean).forEach((p) => {
+    projectMap[p.id] = { id: p.id, name: p.name, type: p.type }
+  })
+
+  return items.map((item) => ({
+    ...item,
+    projects: item.project_id ? (projectMap[item.project_id] || null) : null,
+  }))
+}
 
 /* ========== 看板用：讀取所有工作項目 ========== */
 
-/** 讀取所有工作項目（含關聯案件 + 客戶） */
 export async function getWorkItems() {
-  const { data, error } = await supabase
-    .from('work_items')
-    .select(`
-      id, name, description, status, priority, due_date,
-      project_id, log_id, sort_order, created_at, updated_at,
-      projects:project_id ( id, name, type )
-    `)
-    .order('updated_at', { ascending: false })
-
-  if (error) throw error
-  return data || []
+  const data = await getAll(TABLE, {}, { field: 'updated_at', ascending: false })
+  return await attachProjects(data)
 }
 
 /** 依狀態讀取工作項目（可選 project 篩選） */
 export async function getWorkItemsByFilter({ projectId, status } = {}) {
-  let query = supabase
-    .from('work_items')
-    .select(`
-      id, name, description, status, priority, due_date,
-      project_id, log_id, sort_order, created_at, updated_at,
-      projects:project_id ( id, name, type )
-    `)
+  let data = await getAll(TABLE)
 
-  if (projectId) query = query.eq('project_id', projectId)
-  if (status) query = query.eq('status', status)
+  if (projectId) data = data.filter((i) => i.project_id === projectId)
+  if (status) data = data.filter((i) => i.status === status)
 
-  const { data, error } = await query.order('sort_order', { ascending: true })
-
-  if (error) throw error
-  return data || []
+  data.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+  return await attachProjects(data)
 }
 
 /* ========== CRUD ========== */
 
-/** 新增工作項目 */
 export async function createWorkItem(item) {
-  const { data, error } = await supabase
-    .from('work_items')
-    .insert({
-      name: item.name,
-      description: item.description || null,
-      status: item.status || '待處理',
-      priority: item.priority || '中',
-      due_date: item.due_date || null,
-      project_id: item.project_id || null,
-      log_id: item.log_id || null,
-      sort_order: item.sort_order || 0,
-    })
-    .select(`
-      id, name, description, status, priority, due_date,
-      project_id, log_id, sort_order, created_at, updated_at,
-      projects:project_id ( id, name, type )
-    `)
-    .single()
-
-  if (error) throw error
-  return data
+  const record = await create(TABLE, {
+    name: item.name,
+    description: item.description || null,
+    status: item.status || '待處理',
+    priority: item.priority || '中',
+    due_date: item.due_date || null,
+    project_id: item.project_id || null,
+    log_id: item.log_id || null,
+    sort_order: item.sort_order || 0,
+  })
+  const [withProject] = await attachProjects([record])
+  return withProject
 }
 
-/** 更新工作項目（完整） */
 export async function updateWorkItem(id, updates) {
-  const { data, error } = await supabase
-    .from('work_items')
-    .update(updates)
-    .eq('id', id)
-    .select(`
-      id, name, description, status, priority, due_date,
-      project_id, log_id, sort_order, created_at, updated_at,
-      projects:project_id ( id, name, type )
-    `)
-    .single()
-
-  if (error) throw error
-  return data
+  const record = await update(TABLE, id, updates)
+  const [withProject] = await attachProjects([record])
+  return withProject
 }
 
-/** 更新狀態（看板拖拉用） */
 export async function updateWorkItemStatus(id, status) {
-  const { data, error } = await supabase
-    .from('work_items')
-    .update({ status })
-    .eq('id', id)
-    .select()
-    .single()
-
-  if (error) throw error
-  return data
+  return await update(TABLE, id, { status })
 }
 
-/** 刪除工作項目 */
 export async function deleteWorkItem(id) {
-  const { error } = await supabase
-    .from('work_items')
-    .delete()
-    .eq('id', id)
-
-  if (error) throw error
+  await remove(TABLE, id)
 }
 
 /* ========== 案件底下的工作項目 ========== */
 
-/** 讀取某案件的所有工作項目 */
 export async function getWorkItemsByProject(projectId) {
-  const { data, error } = await supabase
-    .from('work_items')
-    .select(`
-      id, name, description, status, priority, due_date,
-      log_id, sort_order, created_at, updated_at,
-      daily_logs:log_id ( log_date, work_type )
-    `)
-    .eq('project_id', projectId)
-    .order('sort_order', { ascending: true })
+  const data = await getAll(TABLE, { project_id: projectId })
+  data.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
 
-  if (error) throw error
-  return data || []
+  // 附加 daily_log 資訊
+  const logIds = [...new Set(data.map((i) => i.log_id).filter(Boolean))]
+  const logs = logIds.length > 0
+    ? await Promise.all(logIds.map((id) => db.daily_logs.get(id)))
+    : []
+  const logMap = {}
+  logs.filter(Boolean).forEach((l) => {
+    logMap[l.id] = { log_date: l.log_date, work_type: l.work_type }
+  })
+
+  return data.map((item) => ({
+    ...item,
+    daily_logs: item.log_id ? (logMap[item.log_id] || null) : null,
+  }))
 }
 
 /* ========== 日誌底下的工作項目 ========== */
 
-/** 讀取某日誌的工作項目 */
 export async function getWorkItemsByLog(logId) {
-  const { data, error } = await supabase
-    .from('work_items')
-    .select(`
-      id, name, description, status, priority, due_date,
-      project_id, sort_order, created_at,
-      projects:project_id ( id, name, type )
-    `)
-    .eq('log_id', logId)
-    .order('sort_order', { ascending: true })
-
-  if (error) throw error
-  return data || []
+  const data = await getAll(TABLE, { log_id: logId })
+  data.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+  return await attachProjects(data)
 }
 
 /** 批次儲存日誌的工作項目（先清除再新增） */
 export async function saveWorkItemsForLog(logId, items) {
   // 清除該日誌的舊項目
-  const { error: delError } = await supabase
-    .from('work_items')
-    .delete()
-    .eq('log_id', logId)
-
-  if (delError) throw delError
+  const existing = await getAll(TABLE, { log_id: logId })
+  for (const row of existing) {
+    await db.work_items.delete(row.id)
+  }
 
   // 新增（過濾空白）
   const validItems = items
     .filter((item) => item.name && item.name.trim() !== '')
-    .map((item, idx) => ({
+
+  const now = new Date().toISOString()
+  const records = []
+  for (let idx = 0; idx < validItems.length; idx++) {
+    const item = validItems[idx]
+    const record = {
+      id: crypto.randomUUID(),
       log_id: logId,
       name: item.name.trim(),
       description: item.description?.trim() || null,
@@ -171,14 +137,15 @@ export async function saveWorkItemsForLog(logId, items) {
       due_date: item.due_date || null,
       project_id: item.project_id || null,
       sort_order: idx,
-    }))
+      created_at: now,
+      updated_at: now,
+      _dirty: 1,
+    }
+    records.push(record)
+  }
 
-  if (validItems.length > 0) {
-    const { error: insError } = await supabase
-      .from('work_items')
-      .insert(validItems)
-
-    if (insError) throw insError
+  if (records.length > 0) {
+    await db.work_items.bulkPut(records)
   }
 }
 
@@ -186,16 +153,8 @@ export async function saveWorkItemsForLog(logId, items) {
 export async function getWorkItemsByLogIds(logIds) {
   if (!logIds || logIds.length === 0) return []
 
-  const { data, error } = await supabase
-    .from('work_items')
-    .select(`
-      id, name, description, status, priority, due_date,
-      log_id, project_id, sort_order,
-      projects:project_id ( id, name, type )
-    `)
-    .in('log_id', logIds)
-    .order('sort_order', { ascending: true })
-
-  if (error) throw error
-  return data || []
+  const all = await getAll(TABLE)
+  const data = all.filter((i) => logIds.includes(i.log_id))
+  data.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+  return await attachProjects(data)
 }
