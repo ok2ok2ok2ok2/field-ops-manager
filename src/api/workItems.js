@@ -1,11 +1,12 @@
 /**
  * 工作項目 API — 離線版
- * 版本: v2.0
+ * 版本: v2.1
  * 日期: 2026-03-10
  * 檔案: src/api/workItems.js
  *
+ * v2.1：修正 saveWorkItemsForLog 重複資料問題
+ *       清除舊項目改用 remove（加入 delete_queue）
  * v2.0：改為讀寫 IndexedDB
- *       關聯 project 資料從本地 projects 表取得
  */
 
 import { getAll, getOne, create, update, remove } from '../lib/offlineApi'
@@ -87,7 +88,6 @@ export async function getWorkItemsByProject(projectId) {
   const data = await getAll(TABLE, { project_id: projectId })
   data.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
 
-  // 附加 daily_log 資訊
   const logIds = [...new Set(data.map((i) => i.log_id).filter(Boolean))]
   const logs = logIds.length > 0
     ? await Promise.all(logIds.map((id) => db.daily_logs.get(id)))
@@ -113,22 +113,20 @@ export async function getWorkItemsByLog(logId) {
 
 /** 批次儲存日誌的工作項目（先清除再新增） */
 export async function saveWorkItemsForLog(logId, items) {
-  // 清除該日誌的舊項目
+  // 清除該日誌的舊項目（用 remove 才會加入 delete_queue 同步到 Supabase）
   const existing = await getAll(TABLE, { log_id: logId })
   for (const row of existing) {
-    await db.work_items.delete(row.id)
+    await remove(TABLE, row.id)
   }
 
   // 新增（過濾空白）
   const validItems = items
     .filter((item) => item.name && item.name.trim() !== '')
 
-  const now = new Date().toISOString()
-  const records = []
+  const results = []
   for (let idx = 0; idx < validItems.length; idx++) {
     const item = validItems[idx]
-    const record = {
-      id: crypto.randomUUID(),
+    const record = await create(TABLE, {
       log_id: logId,
       name: item.name.trim(),
       description: item.description?.trim() || null,
@@ -137,16 +135,10 @@ export async function saveWorkItemsForLog(logId, items) {
       due_date: item.due_date || null,
       project_id: item.project_id || null,
       sort_order: idx,
-      created_at: now,
-      updated_at: now,
-      _dirty: 1,
-    }
-    records.push(record)
+    })
+    results.push(record)
   }
-
-  if (records.length > 0) {
-    await db.work_items.bulkPut(records)
-  }
+  return results
 }
 
 /** 讀取多個日誌的工作項目（週視圖用） */
