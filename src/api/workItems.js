@@ -1,15 +1,15 @@
 /**
  * 工作項目 API — 離線版
- * 版本: v2.1
- * 日期: 2026-03-10
+ * 版本: v3.0
+ * 日期: 2026-03-16
  * 檔案: src/api/workItems.js
  *
+ * v3.0：所有查詢加 user_id 篩選（多使用者）
  * v2.1：修正 saveWorkItemsForLog 重複資料問題
- *       清除舊項目改用 remove（加入 delete_queue）
  * v2.0：改為讀寫 IndexedDB
  */
 
-import { getAll, getOne, create, update, remove } from '../lib/offlineApi'
+import { getAll, getOne, create, update, remove, getCurrentUserId } from '../lib/offlineApi'
 import db from '../lib/offlineDb'
 
 const TABLE = 'work_items'
@@ -33,16 +33,20 @@ async function attachProjects(items) {
   }))
 }
 
-/* ========== 看板用：讀取所有工作項目 ========== */
+/* ========== 看板用：讀取當前使用者的所有工作項目 ========== */
 
 export async function getWorkItems() {
+  const uid = await getCurrentUserId()
   const data = await getAll(TABLE, {}, { field: 'updated_at', ascending: false })
-  return await attachProjects(data)
+  const filtered = data.filter((i) => i.user_id === uid)
+  return await attachProjects(filtered)
 }
 
 /** 依狀態讀取工作項目（可選 project 篩選） */
 export async function getWorkItemsByFilter({ projectId, status } = {}) {
+  const uid = await getCurrentUserId()
   let data = await getAll(TABLE)
+  data = data.filter((i) => i.user_id === uid)
 
   if (projectId) data = data.filter((i) => i.project_id === projectId)
   if (status) data = data.filter((i) => i.status === status)
@@ -85,10 +89,12 @@ export async function deleteWorkItem(id) {
 /* ========== 案件底下的工作項目 ========== */
 
 export async function getWorkItemsByProject(projectId) {
+  const uid = await getCurrentUserId()
   const data = await getAll(TABLE, { project_id: projectId })
-  data.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+  const filtered = data.filter((i) => i.user_id === uid)
+  filtered.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
 
-  const logIds = [...new Set(data.map((i) => i.log_id).filter(Boolean))]
+  const logIds = [...new Set(filtered.map((i) => i.log_id).filter(Boolean))]
   const logs = logIds.length > 0
     ? await Promise.all(logIds.map((id) => db.daily_logs.get(id)))
     : []
@@ -97,7 +103,7 @@ export async function getWorkItemsByProject(projectId) {
     logMap[l.id] = { log_date: l.log_date, work_type: l.work_type }
   })
 
-  return data.map((item) => ({
+  return filtered.map((item) => ({
     ...item,
     daily_logs: item.log_id ? (logMap[item.log_id] || null) : null,
   }))
@@ -113,13 +119,11 @@ export async function getWorkItemsByLog(logId) {
 
 /** 批次儲存日誌的工作項目（先清除再新增） */
 export async function saveWorkItemsForLog(logId, items) {
-  // 清除該日誌的舊項目（用 remove 才會加入 delete_queue 同步到 Supabase）
   const existing = await getAll(TABLE, { log_id: logId })
   for (const row of existing) {
     await remove(TABLE, row.id)
   }
 
-  // 新增（過濾空白）
   const validItems = items
     .filter((item) => item.name && item.name.trim() !== '')
 

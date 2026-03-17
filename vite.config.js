@@ -1,8 +1,11 @@
 /**
  * Vite 設定檔
- * 版本: v2.1 — 加入 PWA 支援
- * 日期: 2026-03-10
+ * 版本: v2.2 — PWA 排除 Auth 相關路由
+ * 日期: 2026-03-16
  * 檔案: vite.config.js
+ *
+ * v2.2：navigateFallbackDenylist 加入 /login，Auth API 排除快取
+ * v2.1：加入 PWA 支援
  */
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -40,10 +43,16 @@ export default defineConfig({
         ]
       },
       workbox: {
-        // 快取所有靜態資源
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        // 離線時 API 請求的處理
+        // ★ /login 不走 service worker fallback
+        navigateFallbackDenylist: [/^\/login/],
         runtimeCaching: [
+          // ★ Auth API 不快取（NetworkOnly）
+          {
+            urlPattern: /^https:\/\/eiyshksxngtgkydoopba\.supabase\.co\/auth\/v1\/.*/i,
+            handler: 'NetworkOnly',
+          },
+          // REST API 維持 NetworkFirst
           {
             urlPattern: /^https:\/\/eiyshksxngtgkydoopba\.supabase\.co\/rest\/v1\/.*/i,
             handler: 'NetworkFirst',
@@ -51,7 +60,7 @@ export default defineConfig({
               cacheName: 'supabase-api-cache',
               expiration: {
                 maxEntries: 100,
-                maxAgeSeconds: 60 * 60 * 24 // 1 天
+                maxAgeSeconds: 60 * 60 * 24
               },
               networkTimeoutSeconds: 3
             }

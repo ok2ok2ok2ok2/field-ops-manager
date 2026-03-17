@@ -1,16 +1,15 @@
 /**
  * 三合一工作總覽頁面
- * 版本: v1.2
- * 日期: 2026-03-10
+ * 版本: v1.3
+ * 日期: 2026-03-16
  * 檔案: src/pages/WorkDashboard.jsx
  *
- * v1.2 修改：
- *  - PendingPanel：點擊項目開啟 WorkItemModal 編輯/刪除
- *  - PendingPanel：新增「＋」按鈕建立待辦
- *  - WorkItemModal：status='已完成' 時出現日期選擇器關聯日誌
- *  - WeekView：hover 行展開 + 字體放大 + 浮動詳情卡片
- *  - WeekView：假日/無資料行預設壓縮
+ * v1.3 修改：
+ *  - PendingPanel：改為 hover 展開模式（與 ProjectBar 一致）
+ *  - PendingPanel：每個項目右側加「✓」按鈕，彈出日期 popup 快速完成
+ *  - 完成後自動關聯到指定日期的日誌（無日誌則自動建立）
  *
+ * v1.2：WorkItemModal 編輯/刪除 + 完成日期關聯日誌 + WeekView hover
  * v1.1：日誌 status 預設已完成 + ProjectBar ＋/⋯ + ProjectModal
  * v1.0：三合一結構
  */
@@ -88,7 +87,6 @@ export default function WorkDashboard() {
   const [viewMode, setViewMode] = useState('week')
   const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedDate, setSelectedDate] = useState(null)
-  const [pendingOpen, setPendingOpen] = useState(false)
 
   const [projectModalMode, setProjectModalMode] = useState(null)
   const [editingProject, setEditingProject] = useState(null)
@@ -195,6 +193,19 @@ export default function WorkDashboard() {
 
   function handleWiModalClose() { setWiModalItem(undefined); mutateWorkItems(); mutateLogs() }
 
+  async function handleCompleteItem(wi, completionDate) {
+    try {
+      let log = await getLogByDate(completionDate)
+      if (!log) {
+        log = await createLog({ log_date: completionDate, work_type: '內勤' })
+        toast('已自動建立 ' + completionDate + ' 日誌', { icon: '📝' })
+      }
+      await updateWorkItem(wi.id, { ...wi, status: '已完成', log_id: log.id, project_id: wi.project_id || null })
+      toast.success(`「${wi.name}」已完成`)
+      mutateWorkItems(); mutateLogs()
+    } catch (err) { toast.error('完成失敗：' + err.message) }
+  }
+
   const titleText = viewMode === 'month'
     ? format(currentDate, 'yyyy 年 M 月', { locale: zhTW })
     : `${format(weekStart, 'M/d', { locale: zhTW })} — ${format(weekEnd, 'M/d', { locale: zhTW })}`
@@ -245,9 +256,9 @@ export default function WorkDashboard() {
 
       <PendingPanel
         items={pendingItems} overdueCount={overdueCount}
-        isOpen={pendingOpen} onToggle={() => setPendingOpen((v) => !v)}
         onItemClick={(wi) => setWiModalItem(wi)}
         onCreateClick={() => setWiModalItem(null)}
+        onComplete={handleCompleteItem}
       />
 
       {selectedDate && (
@@ -653,30 +664,52 @@ function MonthView({ currentMonth, logMap, workItemsMap, onDateClick }) {
 }
 
 /* ================================================================
-   ★ v1.2 下區：待完成事項面板（可點擊 + 新增按鈕）
+   ★ v1.3 下區：待完成事項面板（hover 展開 + ✓快速完成 popup）
    ================================================================ */
 
 const PRIORITY_BADGE = { '高': 'bg-red-100 text-red-600', '中': 'bg-amber-100 text-amber-600', '低': 'bg-gray-100 text-gray-500' }
 const STATUS_BADGE = { '待處理': 'bg-gray-100 text-gray-600', '進行中': 'bg-blue-100 text-blue-600', '擱置': 'bg-amber-100 text-amber-600' }
 
-function PendingPanel({ items, overdueCount, isOpen, onToggle, onItemClick, onCreateClick }) {
+function PendingPanel({ items, overdueCount, onItemClick, onCreateClick, onComplete }) {
+  const [hovered, setHovered] = useState(false)
+  const [completingItem, setCompletingItem] = useState(null)
+  const [completionDate, setCompletionDate] = useState('')
+
+  function handleCheckClick(e, wi) {
+    e.stopPropagation()
+    setCompletionDate(format(new Date(), 'yyyy-MM-dd'))
+    setCompletingItem(wi)
+  }
+
+  function handleConfirmComplete() {
+    if (!completionDate || !completingItem) return
+    onComplete(completingItem, completionDate)
+    setCompletingItem(null)
+  }
+
   return (
-    <div className="border-t border-gray-200 bg-white">
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className="border-t border-gray-200 bg-white transition-all duration-200 ease-in-out"
+    >
       <div className="flex items-center justify-between px-5 py-3">
-        <button onClick={onToggle} className="flex items-center gap-3 hover:opacity-70 transition-opacity">
-          <span className="text-sm">{isOpen ? '▼' : '▶'}</span>
+        <div className="flex items-center gap-3">
+          <span className="text-sm">{hovered ? '▼' : '▶'}</span>
           <span className="text-sm font-medium text-gray-700">待完成事項</span>
           <span className="text-xs text-gray-400">
             {items.length} 項
             {overdueCount > 0 && <span className="text-red-500 ml-1">（逾期 {overdueCount} 項）</span>}
           </span>
-        </button>
+        </div>
         <button onClick={onCreateClick}
           className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
         >＋ 新增待辦</button>
       </div>
 
-      {isOpen && (
+      <div className="overflow-hidden transition-all duration-200 ease-in-out"
+        style={{ maxHeight: hovered ? 320 : 0, opacity: hovered ? 1 : 0 }}
+      >
         <div className="max-h-64 overflow-auto px-5 pb-4">
           {items.length === 0 ? (
             <p className="text-xs text-gray-300 py-4 text-center">沒有待完成項目 🎉</p>
@@ -696,11 +729,36 @@ function PendingPanel({ items, overdueCount, isOpen, onToggle, onItemClick, onCr
                     {wi.due_date && (
                       <span className={`text-xs flex-shrink-0 ${isOverdue ? 'text-red-500 font-medium' : 'text-gray-400'}`}>{wi.due_date.substring(5)}</span>
                     )}
+                    <button onClick={(e) => handleCheckClick(e, wi)}
+                      className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-green-500 hover:bg-green-100 hover:text-green-700 transition-colors text-base"
+                      title="標記完成"
+                    >✓</button>
                   </div>
                 )
               })}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Fixed 小 Modal：完成日期選擇 */}
+      {completingItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setCompletingItem(null)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-72 p-5">
+            <p className="text-sm font-bold text-gray-800 mb-1">標記完成</p>
+            <p className="text-xs text-gray-500 mb-4 truncate">「{completingItem.name}」</p>
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">完成日期</label>
+            <input type="date" value={completionDate}
+              onChange={(e) => setCompletionDate(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 mb-4" />
+            <div className="flex gap-2">
+              <button onClick={() => setCompletingItem(null)}
+                className="flex-1 px-3 py-2 text-sm text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">取消</button>
+              <button onClick={handleConfirmComplete}
+                className="flex-1 px-3 py-2 text-sm text-white bg-green-600 hover:bg-green-700 rounded-lg font-medium transition-colors">確認完成</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

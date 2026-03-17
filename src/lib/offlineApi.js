@@ -1,32 +1,40 @@
 /**
  * 離線 API 工具層 — 統一的 IndexedDB CRUD
- * 版本: v1.0
- * 日期: 2026-03-10
+ * 版本: v3.0
+ * 日期: 2026-03-16
  * 檔案: src/lib/offlineApi.js
  *
- * 說明：所有 API 檔案改為呼叫此工具進行本地讀寫
- *       寫入時自動標記 _dirty=1
- *       有網路時由 syncManager 負責推送
+ * v3.0：共用表樂觀鎖支援（version 欄位不在本地遞增，由 sync push 時檢查）
+ * v2.0：私人表自動帶 user_id
+ * v1.0：初版
  */
 
 import db from './offlineDb'
+import { supabase } from './supabase'
+
+const PRIVATE_TABLES = ['daily_logs', 'work_items', 'maintenance_records']
+const SHARED_TABLES = ['clients', 'projects', 'devices']
+
+/**
+ * 取得當前使用者 ID
+ */
+export async function getCurrentUserId() {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session?.user?.id) throw new Error('未登入')
+  return session.user.id
+}
 
 /**
  * 讀取整張表（可篩選）
- * @param {string} table - 表名
- * @param {Object} filters - { 欄位: 值 } 篩選條件
- * @param {Object} orderBy - { field, ascending }
  */
 export async function getAll(table, filters = {}, orderBy = null) {
   let collection = db[table].toCollection()
 
-  // 套用篩選
   const entries = Object.entries(filters)
   if (entries.length > 0) {
     const [firstKey, firstVal] = entries[0]
     collection = db[table].where(firstKey).equals(firstVal)
 
-    // 多重篩選用 filter
     if (entries.length > 1) {
       collection = collection.filter((row) =>
         entries.slice(1).every(([k, v]) => row[k] === v)
@@ -36,7 +44,6 @@ export async function getAll(table, filters = {}, orderBy = null) {
 
   let results = await collection.toArray()
 
-  // 排序
   if (orderBy) {
     const { field, ascending = true } = orderBy
     results.sort((a, b) => {
@@ -59,7 +66,7 @@ export async function getOne(table, id) {
 }
 
 /**
- * 新增（自動產生 UUID + 時間戳記 + dirty 標記）
+ * 新增（私人表自動帶 user_id）
  */
 export async function create(table, data) {
   const now = new Date().toISOString()
@@ -70,12 +77,24 @@ export async function create(table, data) {
     updated_at: now,
     _dirty: 1,
   }
+
+  // 私人表自動帶 user_id
+  if (PRIVATE_TABLES.includes(table) && !record.user_id) {
+    record.user_id = await getCurrentUserId()
+  }
+
+  // 共用表新增時 version = 1
+  if (SHARED_TABLES.includes(table) && !record.version) {
+    record.version = 1
+  }
+
   await db[table].put(record)
   return record
 }
 
 /**
  * 更新
+ * 共用表：本地不遞增 version，保留原值（sync push 時用來做衝突檢查）
  */
 export async function update(table, id, updates) {
   const now = new Date().toISOString()
@@ -93,11 +112,10 @@ export async function update(table, id, updates) {
 }
 
 /**
- * 刪除（本地刪除 + 加入刪除佇列等上線同步）
+ * 刪除
  */
 export async function remove(table, id) {
   await db[table].delete(id)
-  // 記錄到刪除佇列
   await db.delete_queue.add({
     table_name: table,
     record_id: id,
@@ -107,13 +125,8 @@ export async function remove(table, id) {
 
 /**
  * 批次寫入關聯表（先清再建）
- * @param {string} table - 關聯表名
- * @param {string} parentKey - 主鍵欄位名 (如 'project_id')
- * @param {string} parentId - 主鍵值
- * @param {Array} rows - 新的關聯資料
  */
 export async function replaceJoin(table, parentKey, parentId, rows) {
-  // 清除該 parent 的舊關聯
   const existing = await db[table].where(parentKey).equals(parentId).toArray()
   for (const row of existing) {
     const key = table === 'project_clients'
@@ -122,7 +135,6 @@ export async function replaceJoin(table, parentKey, parentId, rows) {
     await db[table].delete(key)
   }
 
-  // 寫入新關聯
   if (rows && rows.length > 0) {
     const now = new Date().toISOString()
     const newRows = rows.map((r) => ({

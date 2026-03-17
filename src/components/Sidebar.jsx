@@ -1,17 +1,17 @@
 /**
  * 收縮式側邊導航欄
- * 版本: v2.0
- * 日期: 2026-03-06
+ * 版本: v3.0
+ * 日期: 2026-03-16
  * 檔案: src/components/Sidebar.jsx
  *
- * v2.0 重構：
- *  - 預設窄版 64px，只顯示 icon
- *  - hover 展開 220px（overlay 浮層，不推擠主內容）
- *  - 導航精簡為 3 項：工作總覽、客戶管理、設備管理
+ * v3.0：底部顯示使用者名稱 + 登出按鈕
+ * v2.0：hover 展開 overlay
  */
 
 import { useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
+import { useAuth } from '../contexts/AuthContext'
+import toast from 'react-hot-toast'
 
 const NAV_ITEMS = [
   { path: '/',        label: '工作總覽', icon: '📋' },
@@ -21,13 +21,27 @@ const NAV_ITEMS = [
 
 export default function Sidebar() {
   const [hovered, setHovered] = useState(false)
+  const { profile, signOut } = useAuth()
+  const navigate = useNavigate()
+
+  async function handleSignOut() {
+    try {
+      await signOut()
+      navigate('/login', { replace: true })
+    } catch (err) {
+      toast.error('登出失敗：' + err.message)
+    }
+  }
+
+  const displayName = profile?.display_name || '使用者'
+  const isAdmin = profile?.role === 'admin'
 
   return (
     <>
-      {/* 佔位元素：固定 64px 讓 Layout 的 main 不會被蓋住 */}
+      {/* 佔位元素 */}
       <div className="w-16 flex-shrink-0" />
 
-      {/* 實際 sidebar：fixed 定位，hover 展開 */}
+      {/* 實際 sidebar */}
       <aside
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -37,7 +51,7 @@ export default function Sidebar() {
           backgroundColor: '#1a1a2e',
         }}
       >
-        {/* Logo 區域 */}
+        {/* Logo */}
         <div className="px-4 py-5 border-b border-white/10 flex items-center gap-3 overflow-hidden">
           <span className="text-xl flex-shrink-0">⚙️</span>
           <span
@@ -48,7 +62,7 @@ export default function Sidebar() {
           </span>
         </div>
 
-        {/* 導航列表 */}
+        {/* 導航 */}
         <nav className="flex-1 py-3">
           {NAV_ITEMS.map((item) => (
             <NavLink
@@ -74,14 +88,31 @@ export default function Sidebar() {
           ))}
         </nav>
 
-        {/* 底部版本 */}
-        <div className="px-4 py-3 border-t border-white/10 overflow-hidden">
-          <p
-            className="text-gray-500 text-xs whitespace-nowrap transition-opacity duration-200"
-            style={{ opacity: hovered ? 1 : 0 }}
-          >
-            v2.0 · 2026-03-06
-          </p>
+        {/* 底部：使用者資訊 + 登出 */}
+        <div className="px-3 py-3 border-t border-white/10 overflow-hidden">
+          <div className="flex items-center gap-3 px-1">
+            {/* 頭像圓圈 */}
+            <div className="w-8 h-8 flex-shrink-0 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold">
+              {displayName.charAt(0)}
+            </div>
+            <div
+              className="flex-1 min-w-0 transition-opacity duration-200"
+              style={{ opacity: hovered ? 1 : 0 }}
+            >
+              <p className="text-white text-sm font-medium truncate">{displayName}</p>
+              <p className="text-gray-500 text-xs">
+                {isAdmin ? '管理員' : '使用者'}
+              </p>
+            </div>
+            <button
+              onClick={handleSignOut}
+              className="flex-shrink-0 text-gray-400 hover:text-red-400 transition-colors text-sm"
+              style={{ opacity: hovered ? 1 : 0 }}
+              title="登出"
+            >
+              ⏻
+            </button>
+          </div>
         </div>
       </aside>
     </>

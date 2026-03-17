@@ -71,7 +71,7 @@ export default function SyncStatus() {
   const cfg = stateConfig[currentState]
 
   return (
-    <div className="fixed bottom-4 left-20 z-50">
+    <div className="fixed bottom-4 left-24 z-30">
       <button
         onClick={isOnline ? doSync : undefined}
         className="flex items-center gap-2 px-3 py-2 rounded-full bg-white shadow-lg border text-sm hover:shadow-xl transition-shadow"
