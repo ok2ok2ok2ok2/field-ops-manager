@@ -1,15 +1,12 @@
 /**
  * 三合一工作總覽頁面
- * 版本: v1.3
- * 日期: 2026-03-16
+ * 版本: v1.4
+ * 日期: 2026-03-17
  * 檔案: src/pages/WorkDashboard.jsx
  *
- * v1.3 修改：
- *  - PendingPanel：改為 hover 展開模式（與 ProjectBar 一致）
- *  - PendingPanel：每個項目右側加「✓」按鈕，彈出日期 popup 快速完成
- *  - 完成後自動關聯到指定日期的日誌（無日誌則自動建立）
- *
- * v1.2：WorkItemModal 編輯/刪除 + 完成日期關聯日誌 + WeekView hover
+ * v1.4：boss/admin 檢視模式（我的 / 全員）+ 使用者篩選 + 唯讀防護
+ * v1.3：PendingPanel hover + ✓快速完成 popup
+ * v1.2：WorkItemModal + 完成日期關聯日誌 + WeekView hover
  * v1.1：日誌 status 預設已完成 + ProjectBar ＋/⋯ + ProjectModal
  * v1.0：三合一結構
  */
@@ -25,10 +22,12 @@ import {
 import { zhTW } from 'date-fns/locale'
 import {
   getLogsByMonth, getLogsByRange, getLogByDate,
+  getAllUsersLogsByRange, getAllUsersLogsByMonth,
   createLog, updateLog, deleteLog,
 } from '../api/dailyLogs'
 import {
   getWorkItems, getWorkItemsByLogIds, getWorkItemsByLog,
+  getAllUsersWorkItems,
   saveWorkItemsForLog, createWorkItem, updateWorkItem, deleteWorkItem,
 } from '../api/workItems'
 import {
@@ -36,6 +35,8 @@ import {
   updateProjectClients, archiveProject,
 } from '../api/projects'
 import { getClients } from '../api/clients'
+import { useAuth } from '../contexts/AuthContext'
+import { supabase } from '../lib/supabase'
 
 /* ========== 常數 ========== */
 
@@ -83,6 +84,7 @@ function calcFieldHours(s, e) {
    ================================================================ */
 
 export default function WorkDashboard() {
+  const { user, canViewAll } = useAuth()
   const [filterProjectId, setFilterProjectId] = useState(null)
   const [viewMode, setViewMode] = useState('week')
   const [currentDate, setCurrentDate] = useState(new Date())
@@ -91,11 +93,39 @@ export default function WorkDashboard() {
   const [projectModalMode, setProjectModalMode] = useState(null)
   const [editingProject, setEditingProject] = useState(null)
 
-  // ★ v1.2: 工作項目 Modal
-  const [wiModalItem, setWiModalItem] = useState(undefined) // undefined=closed, null=create, object=edit
+  const [wiModalItem, setWiModalItem] = useState(undefined)
+
+  // ★ v1.4：boss 檢視模式
+  const [teamMode, setTeamMode] = useState(false)       // false=我的, true=全員
+  const [filterUserId, setFilterUserId] = useState('')   // ''=全部, uuid=特定人
+
+  // 拉 profiles 列表（boss/admin 才需要）
+  const { data: profilesList } = useSWR(
+    canViewAll ? 'profiles-list' : null,
+    async () => {
+      const { data, error } = await supabase.from('profiles').select('id, display_name, role').order('created_at')
+      if (error) throw error
+      return data || []
+    }
+  )
+
+  // 建立 userId → displayName 的 map
+  const userNameMap = useMemo(() => {
+    const map = {}
+    if (profilesList) {
+      for (const p of profilesList) map[p.id] = p.display_name || p.id.substring(0, 8)
+    }
+    return map
+  }, [profilesList])
 
   const { data: projects, mutate: mutateProjects } = useSWR('projects', getProjects)
-  const { data: allWorkItems, mutate: mutateWorkItems } = useSWR('all-work-items', getWorkItems)
+
+  // ★ v1.4：根據 teamMode 決定拉自己的還是全員的 workItems
+  const workItemsSwrKey = teamMode ? `all-work-items-team-${filterUserId}` : 'all-work-items'
+  const workItemsFetcher = teamMode
+    ? () => getAllUsersWorkItems(filterUserId || null)
+    : () => getWorkItems()
+  const { data: allWorkItems, mutate: mutateWorkItems } = useSWR(workItemsSwrKey, workItemsFetcher)
 
   const year = currentDate.getFullYear()
   const month = currentDate.getMonth() + 1
@@ -104,8 +134,19 @@ export default function WorkDashboard() {
   const weekStartStr = format(weekStart, 'yyyy-MM-dd')
   const weekEndStr = format(weekEnd, 'yyyy-MM-dd')
 
-  const logSwrKey = viewMode === 'month' ? `logs-month-${year}-${month}` : `logs-week-${weekStartStr}`
-  const logFetcher = viewMode === 'month' ? () => getLogsByMonth(year, month) : () => getLogsByRange(weekStartStr, weekEndStr)
+  // ★ v1.4：根據 teamMode 決定拉自己的還是全員的日誌
+  const logSwrKey = teamMode
+    ? (viewMode === 'month' ? `logs-team-month-${year}-${month}-${filterUserId}` : `logs-team-week-${weekStartStr}-${filterUserId}`)
+    : (viewMode === 'month' ? `logs-month-${year}-${month}` : `logs-week-${weekStartStr}`)
+
+  const logFetcher = teamMode
+    ? (viewMode === 'month'
+      ? () => getAllUsersLogsByMonth(year, month, filterUserId || null)
+      : () => getAllUsersLogsByRange(weekStartStr, weekEndStr, filterUserId || null))
+    : (viewMode === 'month'
+      ? () => getLogsByMonth(year, month)
+      : () => getLogsByRange(weekStartStr, weekEndStr))
+
   const { data: logs, isLoading: logsLoading, mutate: mutateLogs } = useSWR(logSwrKey, logFetcher)
 
   const logIds = useMemo(() => (logs || []).map((l) => l.id), [logs])
@@ -168,6 +209,9 @@ export default function WorkDashboard() {
     return map
   }, [workItemsMap, filterProjectId])
 
+  // ★ v1.4：判斷是否唯讀（全員模式下看別人的資料）
+  const isReadOnly = teamMode && filterUserId && filterUserId !== user?.id
+
   /* --- handlers --- */
 
   function handleProjectClick(pid) { setFilterProjectId((prev) => (prev === pid ? null : pid)) }
@@ -194,6 +238,7 @@ export default function WorkDashboard() {
   function handleWiModalClose() { setWiModalItem(undefined); mutateWorkItems(); mutateLogs() }
 
   async function handleCompleteItem(wi, completionDate) {
+    if (isReadOnly) { toast.error('唯讀模式：不能修改他人資料'); return }
     try {
       let log = await getLogByDate(completionDate)
       if (!log) {
@@ -204,6 +249,12 @@ export default function WorkDashboard() {
       toast.success(`「${wi.name}」已完成`)
       mutateWorkItems(); mutateLogs()
     } catch (err) { toast.error('完成失敗：' + err.message) }
+  }
+
+  // ★ v1.4：切換 teamMode 時重置篩選
+  function handleToggleTeamMode() {
+    setTeamMode((prev) => !prev)
+    setFilterUserId('')
   }
 
   const titleText = viewMode === 'month'
@@ -222,7 +273,11 @@ export default function WorkDashboard() {
       <div className="flex-1 overflow-auto p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="text-lg font-bold text-gray-800">工作日誌</h2>
+            <h2 className="text-lg font-bold text-gray-800">
+              工作日誌
+              {teamMode && <span className="text-sm font-normal text-purple-500 ml-2">👥 團隊檢視</span>}
+              {isReadOnly && <span className="text-sm font-normal text-amber-500 ml-2">🔒 唯讀</span>}
+            </h2>
             <p className="text-gray-400 text-xs mt-0.5">
               {titleText}
               {filterProjectId && (
@@ -231,6 +286,29 @@ export default function WorkDashboard() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+
+            {/* ★ v1.4：boss/admin 團隊切換 + 使用者篩選 */}
+            {canViewAll && (
+              <>
+                <button onClick={handleToggleTeamMode}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    teamMode ? 'bg-purple-100 text-purple-700 ring-1 ring-purple-300' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                  }`}
+                >{teamMode ? '👥 全員' : '👤 我的'}</button>
+
+                {teamMode && profilesList && (
+                  <select value={filterUserId} onChange={(e) => setFilterUserId(e.target.value)}
+                    className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    <option value="">全部人員</option>
+                    {profilesList.map((p) => (
+                      <option key={p.id} value={p.id}>{p.display_name || p.id.substring(0, 8)}</option>
+                    ))}
+                  </select>
+                )}
+              </>
+            )}
+
             <div className="flex bg-gray-100 rounded-lg p-0.5">
               <button onClick={() => setViewMode('week')}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${viewMode === 'week' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
@@ -248,20 +326,28 @@ export default function WorkDashboard() {
         {logsLoading ? (
           <div className="flex items-center justify-center py-20"><p className="text-gray-400">載入中...</p></div>
         ) : viewMode === 'week' ? (
-          <WeekView weekStart={weekStart} logMap={logMap} workItemsMap={filteredWorkItemsMap} onDateClick={setSelectedDate} />
+          <WeekView weekStart={weekStart} logMap={logMap} workItemsMap={filteredWorkItemsMap}
+            onDateClick={(d) => { if (!isReadOnly) setSelectedDate(d) }}
+            teamMode={teamMode} userNameMap={userNameMap}
+          />
         ) : (
-          <MonthView currentMonth={currentDate} logMap={logMap} workItemsMap={filteredWorkItemsMap} onDateClick={setSelectedDate} />
+          <MonthView currentMonth={currentDate} logMap={logMap} workItemsMap={filteredWorkItemsMap}
+            onDateClick={(d) => { if (!isReadOnly) setSelectedDate(d) }}
+            teamMode={teamMode} userNameMap={userNameMap}
+          />
         )}
       </div>
 
       <PendingPanel
         items={pendingItems} overdueCount={overdueCount}
-        onItemClick={(wi) => setWiModalItem(wi)}
-        onCreateClick={() => setWiModalItem(null)}
+        onItemClick={(wi) => { if (!isReadOnly) setWiModalItem(wi) }}
+        onCreateClick={() => { if (isReadOnly) { toast.error('唯讀模式：不能新增他人待辦'); return }; setWiModalItem(null) }}
         onComplete={handleCompleteItem}
+        teamMode={teamMode} userNameMap={userNameMap}
+        isReadOnly={isReadOnly}
       />
 
-      {selectedDate && (
+      {selectedDate && !isReadOnly && (
         <DailyLogModal date={selectedDate} existingLog={logMap[format(selectedDate, 'yyyy-MM-dd')]} onClose={handleDailyModalClose} />
       )}
 
@@ -269,7 +355,7 @@ export default function WorkDashboard() {
         <ProjectModal mode={projectModalMode} project={editingProject} onClose={handleProjectModalClose} />
       )}
 
-      {wiModalItem !== undefined && (
+      {wiModalItem !== undefined && !isReadOnly && (
         <WorkItemModal item={wiModalItem} onClose={handleWiModalClose} />
       )}
     </div>
@@ -277,7 +363,7 @@ export default function WorkDashboard() {
 }
 
 /* ================================================================
-   上區：案件方塊列（v1.1 不變）
+   上區：案件方塊列（不變）
    ================================================================ */
 
 function ProjectBar({ projects, itemCounts, filterProjectId, onProjectClick, onCreate, onEdit, onArchive }) {
@@ -359,7 +445,7 @@ function ProjectCard({ project, count, isActive, onFilter, onEdit, onArchive }) 
 }
 
 /* ================================================================
-   案件 Modal（v1.1 不變）
+   案件 Modal（不變）
    ================================================================ */
 
 function ProjectModal({ mode, project, onClose }) {
@@ -469,10 +555,10 @@ function ProjectModal({ mode, project, onClose }) {
 }
 
 /* ================================================================
-   ★ v1.2 中區：週視圖（hover 展開 + 浮動卡片 + 字體放大）
+   ★ v1.4 中區：週視圖（加 teamMode 人名標籤）
    ================================================================ */
 
-function WeekView({ weekStart, logMap, workItemsMap, onDateClick }) {
+function WeekView({ weekStart, logMap, workItemsMap, onDateClick, teamMode, userNameMap }) {
   const [hoveredIdx, setHoveredIdx] = useState(null)
   const days = []
   for (let i = 0; i < 7; i++) days.push(addDays(weekStart, i))
@@ -489,7 +575,6 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick }) {
         const hasData = !!log
         const isHovered = hoveredIdx === idx
 
-        // 預設高度：有資料 80px，無資料/假日 48px；hover 時自動展開
         const rowMinHeight = isHovered ? 120 : (hasData ? 80 : 48)
 
         return (
@@ -498,7 +583,6 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick }) {
             onMouseEnter={() => setHoveredIdx(idx)}
             onMouseLeave={() => setHoveredIdx(null)}
           >
-            {/* 主行 */}
             <div
               onClick={() => onDateClick(d)}
               className={`flex cursor-pointer transition-all duration-200 ${
@@ -506,7 +590,6 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick }) {
               }`}
               style={{ minHeight: rowMinHeight }}
             >
-              {/* 左側日期 */}
               <div className={`flex-shrink-0 p-3 flex flex-col items-center justify-center border-r border-gray-50 transition-all duration-200 ${
                 isWeekend ? 'bg-red-50/30' : ''
               }`} style={{ width: isHovered ? 100 : 80 }}>
@@ -523,15 +606,20 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick }) {
                 </span>
               </div>
 
-              {/* 右側內容 */}
               <div className="flex-1 p-3">
                 {!log ? (
                   <p className={`text-gray-300 pt-1 transition-all duration-200 ${isHovered ? 'text-sm' : 'text-xs'}`}>
-                    點擊新增日誌
+                    {teamMode ? '' : '點擊新增日誌'}
                   </p>
                 ) : (
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-2 flex-wrap">
+                      {/* ★ v1.4：團隊模式顯示人名 */}
+                      {teamMode && log.user_id && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 font-medium">
+                          {userNameMap[log.user_id] || '?'}
+                        </span>
+                      )}
                       <span className={`rounded-full ${WORK_TYPE_STYLE[log.work_type] || 'bg-gray-400'} ${isHovered ? 'w-2.5 h-2.5' : 'w-2 h-2'}`} />
                       <span className={`font-medium text-gray-600 transition-all duration-200 ${isHovered ? 'text-sm' : 'text-xs'}`}>
                         {log.work_type}
@@ -567,10 +655,14 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick }) {
               </div>
             </div>
 
-            {/* ★ 浮動詳情卡片 */}
             {isHovered && hasData && items.length > 0 && (
               <div className="absolute right-4 top-2 z-10 bg-white border border-gray-200 rounded-xl shadow-xl p-4 w-72 pointer-events-none">
                 <div className="flex items-center gap-2 mb-2">
+                  {teamMode && log.user_id && (
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 font-medium">
+                      {userNameMap[log.user_id] || '?'}
+                    </span>
+                  )}
                   <span className={`w-3 h-3 rounded-full ${WORK_TYPE_STYLE[log.work_type] || 'bg-gray-400'}`} />
                   <span className="text-sm font-bold text-gray-800">
                     {format(d, 'M/d（E）', { locale: zhTW })}
@@ -611,10 +703,10 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick }) {
 }
 
 /* ================================================================
-   中區：月視圖（不變）
+   中區：月視圖（v1.4 加 teamMode 人名）
    ================================================================ */
 
-function MonthView({ currentMonth, logMap, workItemsMap, onDateClick }) {
+function MonthView({ currentMonth, logMap, workItemsMap, onDateClick, teamMode, userNameMap }) {
   const monthStart = startOfMonth(currentMonth)
   const monthEnd = endOfMonth(currentMonth)
   const calStart = startOfWeek(monthStart, { weekStartsOn: 0 })
@@ -648,6 +740,11 @@ function MonthView({ currentMonth, logMap, workItemsMap, onDateClick }) {
               {log && inMonth && (
                 <div className="space-y-0.5 mt-1">
                   <div className="flex items-center gap-1">
+                    {teamMode && log.user_id && (
+                      <span className="text-xs px-1 py-0 rounded bg-purple-100 text-purple-600" style={{ fontSize: 10 }}>
+                        {userNameMap[log.user_id] || '?'}
+                      </span>
+                    )}
                     <span className={`w-2 h-2 rounded-full ${WORK_TYPE_STYLE[log.work_type] || 'bg-gray-400'}`} />
                     <span className="text-xs text-gray-500">{log.work_type}</span>
                     {log.field_hours && <span className="text-xs text-gray-400">{log.field_hours}h</span>}
@@ -664,19 +761,20 @@ function MonthView({ currentMonth, logMap, workItemsMap, onDateClick }) {
 }
 
 /* ================================================================
-   ★ v1.3 下區：待完成事項面板（hover 展開 + ✓快速完成 popup）
+   ★ v1.4 下區：待完成事項面板（加 teamMode 人名 + 唯讀防護）
    ================================================================ */
 
 const PRIORITY_BADGE = { '高': 'bg-red-100 text-red-600', '中': 'bg-amber-100 text-amber-600', '低': 'bg-gray-100 text-gray-500' }
 const STATUS_BADGE = { '待處理': 'bg-gray-100 text-gray-600', '進行中': 'bg-blue-100 text-blue-600', '擱置': 'bg-amber-100 text-amber-600' }
 
-function PendingPanel({ items, overdueCount, onItemClick, onCreateClick, onComplete }) {
+function PendingPanel({ items, overdueCount, onItemClick, onCreateClick, onComplete, teamMode, userNameMap, isReadOnly }) {
   const [hovered, setHovered] = useState(false)
   const [completingItem, setCompletingItem] = useState(null)
   const [completionDate, setCompletionDate] = useState('')
 
   function handleCheckClick(e, wi) {
     e.stopPropagation()
+    if (isReadOnly) { toast.error('唯讀模式：不能修改他人資料'); return }
     setCompletionDate(format(new Date(), 'yyyy-MM-dd'))
     setCompletingItem(wi)
   }
@@ -702,9 +800,11 @@ function PendingPanel({ items, overdueCount, onItemClick, onCreateClick, onCompl
             {overdueCount > 0 && <span className="text-red-500 ml-1">（逾期 {overdueCount} 項）</span>}
           </span>
         </div>
-        <button onClick={onCreateClick}
-          className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >＋ 新增待辦</button>
+        {!isReadOnly && (
+          <button onClick={onCreateClick}
+            className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >＋ 新增待辦</button>
+        )}
       </div>
 
       <div className="overflow-hidden transition-all duration-200 ease-in-out"
@@ -722,6 +822,12 @@ function PendingPanel({ items, overdueCount, onItemClick, onCreateClick, onCompl
                   <div key={wi.id} onClick={() => onItemClick(wi)}
                     className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm cursor-pointer transition-colors hover:ring-1 hover:ring-blue-300 ${isOverdue ? 'bg-red-50' : 'bg-gray-50 hover:bg-blue-50'}`}
                   >
+                    {/* ★ v1.4：團隊模式顯示人名 */}
+                    {teamMode && wi.user_id && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 font-medium flex-shrink-0">
+                        {userNameMap[wi.user_id] || '?'}
+                      </span>
+                    )}
                     <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${PRIORITY_BADGE[wi.priority] || ''}`}>{wi.priority}</span>
                     <span className="flex-1 text-gray-700 truncate">{wi.name}</span>
                     {wi.projects && <span className="text-xs text-blue-400 flex-shrink-0">[{wi.projects.name}]</span>}
@@ -729,10 +835,12 @@ function PendingPanel({ items, overdueCount, onItemClick, onCreateClick, onCompl
                     {wi.due_date && (
                       <span className={`text-xs flex-shrink-0 ${isOverdue ? 'text-red-500 font-medium' : 'text-gray-400'}`}>{wi.due_date.substring(5)}</span>
                     )}
-                    <button onClick={(e) => handleCheckClick(e, wi)}
-                      className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-green-500 hover:bg-green-100 hover:text-green-700 transition-colors text-base"
-                      title="標記完成"
-                    >✓</button>
+                    {!isReadOnly && (
+                      <button onClick={(e) => handleCheckClick(e, wi)}
+                        className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-green-500 hover:bg-green-100 hover:text-green-700 transition-colors text-base"
+                        title="標記完成"
+                      >✓</button>
+                    )}
                   </div>
                 )
               })}
@@ -741,7 +849,6 @@ function PendingPanel({ items, overdueCount, onItemClick, onCreateClick, onCompl
         </div>
       </div>
 
-      {/* Fixed 小 Modal：完成日期選擇 */}
       {completingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/30" onClick={() => setCompletingItem(null)} />
@@ -766,31 +873,22 @@ function PendingPanel({ items, overdueCount, onItemClick, onCreateClick, onCompl
 }
 
 /* ================================================================
-   ★ v1.2 工作項目 Modal（新增/編輯/刪除 + 完成日期關聯日誌）
+   ★ v1.2 工作項目 Modal（不變）
    ================================================================ */
 
 function WorkItemModal({ item, onClose }) {
   const isEdit = !!item
   const [form, setForm] = useState({
-    name: '',
-    status: '待處理',
-    priority: '中',
-    due_date: '',
-    project_id: '',
-    completion_date: format(new Date(), 'yyyy-MM-dd'),
+    name: '', status: '待處理', priority: '中', due_date: '', project_id: '', completion_date: '',
   })
   const [saving, setSaving] = useState(false)
-
   const { data: projects } = useSWR('projects', getProjects)
 
   useEffect(() => {
-    if (isEdit) {
+    if (isEdit && item) {
       setForm({
-        name: item.name || '',
-        status: item.status || '待處理',
-        priority: item.priority || '中',
-        due_date: item.due_date || '',
-        project_id: item.project_id || '',
+        name: item.name || '', status: item.status || '待處理', priority: item.priority || '中',
+        due_date: item.due_date || '', project_id: item.project_id || '',
         completion_date: format(new Date(), 'yyyy-MM-dd'),
       })
     }
@@ -810,7 +908,6 @@ function WorkItemModal({ item, onClose }) {
         project_id: form.project_id || null,
       }
 
-      // ★ 完成 → 關聯到指定日期的日誌
       if (form.status === '已完成' && form.completion_date) {
         let log = await getLogByDate(form.completion_date)
         if (!log) {
@@ -853,8 +950,6 @@ function WorkItemModal({ item, onClose }) {
         </div>
 
         <div className="p-6 space-y-4">
-
-          {/* 名稱 */}
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-1">名稱 <span className="text-red-500">*</span></label>
             <input type="text" value={form.name} onChange={(e) => handleChange('name', e.target.value)}
@@ -862,7 +957,6 @@ function WorkItemModal({ item, onClose }) {
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
 
-          {/* 狀態 */}
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-2">狀態</label>
             <div className="flex gap-2">
@@ -881,7 +975,6 @@ function WorkItemModal({ item, onClose }) {
             </div>
           </div>
 
-          {/* ★ 完成日期（status=已完成 時出現） */}
           {form.status === '已完成' && (
             <div>
               <label className="block text-sm font-medium text-gray-600 mb-1">完成日期（關聯到該日誌）</label>
@@ -891,7 +984,6 @@ function WorkItemModal({ item, onClose }) {
             </div>
           )}
 
-          {/* 優先級 */}
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-2">優先級</label>
             <div className="flex gap-2">
@@ -909,14 +1001,12 @@ function WorkItemModal({ item, onClose }) {
             </div>
           </div>
 
-          {/* 到期日 */}
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-1">到期日</label>
             <input type="date" value={form.due_date} onChange={(e) => handleChange('due_date', e.target.value)}
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
 
-          {/* 關聯案件 */}
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-1">關聯案件</label>
             <select value={form.project_id} onChange={(e) => handleChange('project_id', e.target.value)}

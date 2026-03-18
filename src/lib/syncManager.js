@@ -1,9 +1,10 @@
 /**
  * 同步管理器 — 雙向同步 IndexedDB ↔ Supabase
- * 版本: v3.0
- * 日期: 2026-03-16
+ * 版本: v4.0
+ * 日期: 2026-03-17
  * 檔案: src/lib/syncManager.js
  *
+ * v4.0：boss/admin pullRemote 拉全員私人表（唯讀用途）
  * v3.0：共用表 push 加樂觀鎖（version 衝突偵測）
  * v2.0：私人表 pull 加 user_id 篩選
  * v1.0：初版
@@ -24,6 +25,20 @@ async function getAuthUserId() {
   return session?.user?.id || null
 }
 
+async function getUserRole(uid) {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', uid)
+      .single()
+    if (error) return 'user'
+    return data?.role || 'user'
+  } catch {
+    return 'user'
+  }
+}
+
 /* ========== 完整同步 ========== */
 
 export async function fullSync(onProgress) {
@@ -34,11 +49,14 @@ export async function fullSync(onProgress) {
       return { success: false, error: '未登入' }
     }
 
+    const role = await getUserRole(uid)
+    const canViewAll = (role === 'admin' || role === 'boss')
+
     onProgress?.('pushing')
     await pushLocal(uid)
 
     onProgress?.('pulling')
-    await pullRemote(uid)
+    await pullRemote(uid, canViewAll)
 
     onProgress?.('deleting')
     await processDeleteQueue()
@@ -69,12 +87,16 @@ async function pushLocal(uid) {
     for (const row of dirtyRows) {
       const { _dirty, ...data } = row
 
+      // ★ boss/admin 不能 push 別人的私人資料
+      if (!isShared && data.user_id !== uid) {
+        await db[table].update(row.id, { _dirty: 0 })
+        continue
+      }
+
       try {
         if (isShared) {
-          // ★ 共用表：樂觀鎖 push
           await pushSharedRow(table, data)
         } else {
-          // 私人表：直接 upsert
           const { error } = await supabase
             .from(table)
             .upsert(data, { onConflict: 'id' })
@@ -107,17 +129,10 @@ async function pushLocal(uid) {
 
 /**
  * ★ 共用表樂觀鎖 push
- *
- * 邏輯：
- * - 先檢查遠端是否存在此 id
- * - 新資料 → insert（version=1）
- * - 既有資料 → update SET version=version+1 WHERE version=本地version
- * - 若 0 rows 更新 → 版本衝突 → 從遠端拉最新覆蓋本地
  */
 async function pushSharedRow(table, data) {
   const localVersion = data.version || 1
 
-  // 先檢查遠端是否存在
   const { data: existing, error: fetchErr } = await supabase
     .from(table)
     .select('id, version')
@@ -127,20 +142,16 @@ async function pushSharedRow(table, data) {
   if (fetchErr) throw fetchErr
 
   if (!existing) {
-    // 新資料：insert
     const { error } = await supabase.from(table).insert({ ...data, version: 1 })
     if (error) throw error
     await db[table].update(data.id, { _dirty: 0, version: 1 })
     return
   }
 
-  // 既有資料：版本比對
   if (existing.version !== localVersion) {
-    // ★ 版本衝突！遠端已被別人改過
     console.warn(`[SyncManager] 版本衝突 ${table}/${data.id}: 本地 v${localVersion}, 遠端 v${existing.version}`)
     toast.error(`資料衝突：此筆${tableLabel(table)}已被其他人修改，將重新載入`, { duration: 4000 })
 
-    // 拉遠端最新版覆蓋本地
     const { data: fresh, error: pullErr } = await supabase
       .from(table)
       .select('*')
@@ -153,7 +164,6 @@ async function pushSharedRow(table, data) {
     return
   }
 
-  // 版本一致：正常更新，version + 1
   const { version, ...updateData } = data
   const { data: updated, error: updateErr } = await supabase
     .from(table)
@@ -165,7 +175,6 @@ async function pushSharedRow(table, data) {
   if (updateErr) throw updateErr
 
   if (!updated || updated.length === 0) {
-    // 競爭條件：在 select 和 update 之間被改了
     console.warn(`[SyncManager] 競爭衝突 ${table}/${data.id}`)
     toast.error(`資料衝突：此筆${tableLabel(table)}已被其他人修改，將重新載入`, { duration: 4000 })
 
@@ -174,7 +183,6 @@ async function pushSharedRow(table, data) {
     return
   }
 
-  // 成功：更新本地 version 和清 dirty
   await db[table].update(data.id, { _dirty: 0, version: localVersion + 1 })
 }
 
@@ -185,13 +193,19 @@ function tableLabel(table) {
 
 /* ========== 從 Supabase 拉取最新資料 ========== */
 
-async function pullRemote(uid) {
+async function pullRemote(uid, canViewAll = false) {
   for (const table of SHARED_TABLES) {
     await pullTable(table, null)
   }
 
   for (const table of PRIVATE_TABLES) {
-    await pullTable(table, uid)
+    if (canViewAll) {
+      // ★ boss/admin：拉全員私人表（RLS 已放行 SELECT）
+      await pullTable(table, null)
+    } else {
+      // 一般使用者：只拉自己的
+      await pullTable(table, uid)
+    }
   }
 
   for (const table of JOIN_TABLES) {
@@ -225,11 +239,11 @@ async function pullTable(table, uid) {
     const { data, error } = await query
     if (error) throw error
     if (!data || data.length === 0) {
-      if (uid) {
-        const allLocal = await db[table].where('_dirty').equals(0).toArray()
-        for (const local of allLocal) {
-          if (local.user_id === uid) await db[table].delete(local.id)
-        }
+      // 清除本地已同步但遠端不存在的資料
+      const allLocal = await db[table].where('_dirty').equals(0).toArray()
+      for (const local of allLocal) {
+        if (uid && local.user_id !== uid) continue
+        await db[table].delete(local.id)
       }
       return
     }

@@ -1,12 +1,11 @@
 /**
  * Auth 狀態管理
- * 版本: v1.4
- * 日期: 2026-03-16
+ * 版本: v1.5
+ * 日期: 2026-03-17
  * 檔案: src/contexts/AuthContext.jsx
  *
+ * v1.5：新增 isBoss / canViewAll（boss+admin 可檢視全員私人資料）
  * v1.4：分離 auth 偵測和 profile 載入
- *       onAuthStateChange 只管 user state
- *       profile 由獨立 useEffect 載入（避免 async 競爭）
  */
 
 import { createContext, useContext, useState, useEffect, useRef } from 'react'
@@ -113,13 +112,18 @@ export function AuthProvider({ children }) {
     setProfile(null)
   }
 
+  const role = profile?.role || 'user'
+
   const value = {
     user,
     profile,
     loading,
     signIn,
     signOut,
-    isAdmin: profile?.role === 'admin',
+    role,
+    isAdmin: role === 'admin',
+    isBoss: role === 'boss',
+    canViewAll: role === 'admin' || role === 'boss',
   }
 
   return (
