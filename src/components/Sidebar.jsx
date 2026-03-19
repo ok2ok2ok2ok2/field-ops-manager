@@ -1,9 +1,10 @@
 /**
  * 收縮式側邊導航欄
- * 版本: v3.0
- * 日期: 2026-03-16
+ * 版本: v4.0
+ * 日期: 2026-03-19
  * 檔案: src/components/Sidebar.jsx
  *
+ * v4.0：admin 顯示「使用者管理」導航項 + boss 角色標籤
  * v3.0：底部顯示使用者名稱 + 登出按鈕
  * v2.0：hover 展開 overlay
  */
@@ -19,9 +20,19 @@ const NAV_ITEMS = [
   { path: '/devices', label: '設備管理', icon: '📷' },
 ]
 
+const ADMIN_NAV_ITEMS = [
+  { path: '/admin/users', label: '使用者管理', icon: '🔧' },
+]
+
+const ROLE_LABEL = {
+  admin: '管理員',
+  boss: '主管',
+  user: '使用者',
+}
+
 export default function Sidebar() {
   const [hovered, setHovered] = useState(false)
-  const { profile, signOut } = useAuth()
+  const { profile, isAdmin, signOut } = useAuth()
   const navigate = useNavigate()
 
   async function handleSignOut() {
@@ -34,7 +45,8 @@ export default function Sidebar() {
   }
 
   const displayName = profile?.display_name || '使用者'
-  const isAdmin = profile?.role === 'admin'
+  const role = profile?.role || 'user'
+  const navItems = isAdmin ? [...NAV_ITEMS, ...ADMIN_NAV_ITEMS] : NAV_ITEMS
 
   return (
     <>
@@ -64,7 +76,7 @@ export default function Sidebar() {
 
         {/* 導航 */}
         <nav className="flex-1 py-3">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
@@ -101,7 +113,7 @@ export default function Sidebar() {
             >
               <p className="text-white text-sm font-medium truncate">{displayName}</p>
               <p className="text-gray-500 text-xs">
-                {isAdmin ? '管理員' : '使用者'}
+                {ROLE_LABEL[role] || '使用者'}
               </p>
             </div>
             <button

@@ -1,9 +1,11 @@
 /**
  * 三合一工作總覽頁面
- * 版本: v1.4
- * 日期: 2026-03-17
+ * 版本: v1.5
+ * 日期: 2026-03-19
  * 檔案: src/pages/WorkDashboard.jsx
  *
+ * v1.5：P10 案件可見性 — admin限制(user_projects) + 使用者自訂(hidden_projects) 兩層篩選
+ *       ProjectBar 加「👁 顯示/隱藏」按鈕 + VisibilityModal
  * v1.4：boss/admin 檢視模式（我的 / 全員）+ 使用者篩選 + 唯讀防護
  * v1.3：PendingPanel hover + ✓快速完成 popup
  * v1.2：WorkItemModal + 完成日期關聯日誌 + WeekView hover
@@ -11,7 +13,7 @@
  * v1.0：三合一結構
  */
 
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import useSWR from 'swr'
 import toast from 'react-hot-toast'
 import {
@@ -31,7 +33,8 @@ import {
   saveWorkItemsForLog, createWorkItem, updateWorkItem, deleteWorkItem,
 } from '../api/workItems'
 import {
-  getProjects, createProject, updateProject,
+  getProjects, getVisibleProjects, getAllowedProjects, updateHiddenProjects,
+  createProject, updateProject,
   updateProjectClients, archiveProject,
 } from '../api/projects'
 import { getClients } from '../api/clients'
@@ -84,7 +87,7 @@ function calcFieldHours(s, e) {
    ================================================================ */
 
 export default function WorkDashboard() {
-  const { user, canViewAll } = useAuth()
+  const { user, profile, canViewAll, refreshProfile } = useAuth()
   const [filterProjectId, setFilterProjectId] = useState(null)
   const [viewMode, setViewMode] = useState('week')
   const [currentDate, setCurrentDate] = useState(new Date())
@@ -96,8 +99,11 @@ export default function WorkDashboard() {
   const [wiModalItem, setWiModalItem] = useState(undefined)
 
   // ★ v1.4：boss 檢視模式
-  const [teamMode, setTeamMode] = useState(false)       // false=我的, true=全員
-  const [filterUserId, setFilterUserId] = useState('')   // ''=全部, uuid=特定人
+  const [teamMode, setTeamMode] = useState(false)
+  const [filterUserId, setFilterUserId] = useState('')
+
+  // ★ v1.5：顯示/隱藏案件 Modal
+  const [showVisibilityModal, setShowVisibilityModal] = useState(false)
 
   // 拉 profiles 列表（boss/admin 才需要）
   const { data: profilesList } = useSWR(
@@ -109,7 +115,6 @@ export default function WorkDashboard() {
     }
   )
 
-  // 建立 userId → displayName 的 map
   const userNameMap = useMemo(() => {
     const map = {}
     if (profilesList) {
@@ -118,7 +123,12 @@ export default function WorkDashboard() {
     return map
   }, [profilesList])
 
-  const { data: projects, mutate: mutateProjects } = useSWR('projects', getProjects)
+  // ★ v1.5：用 getVisibleProjects 取代 getProjects（兩層篩選）
+  const visibleProjectsKey = user?.id ? `visible-projects-${user.id}-${JSON.stringify(profile?.hidden_projects || [])}` : null
+  const { data: projects, mutate: mutateProjects } = useSWR(
+    visibleProjectsKey,
+    () => getVisibleProjects(user.id, profile)
+  )
 
   // ★ v1.4：根據 teamMode 決定拉自己的還是全員的 workItems
   const workItemsSwrKey = teamMode ? `all-work-items-team-${filterUserId}` : 'all-work-items'
@@ -134,7 +144,6 @@ export default function WorkDashboard() {
   const weekStartStr = format(weekStart, 'yyyy-MM-dd')
   const weekEndStr = format(weekEnd, 'yyyy-MM-dd')
 
-  // ★ v1.4：根據 teamMode 決定拉自己的還是全員的日誌
   const logSwrKey = teamMode
     ? (viewMode === 'month' ? `logs-team-month-${year}-${month}-${filterUserId}` : `logs-team-week-${weekStartStr}-${filterUserId}`)
     : (viewMode === 'month' ? `logs-month-${year}-${month}` : `logs-week-${weekStartStr}`)
@@ -172,16 +181,27 @@ export default function WorkDashboard() {
     return map
   }, [logs])
 
+  // ★ v1.5：用 visibleProjects 的 ID 集合做 workItems 篩選
+  const visibleProjectIds = useMemo(() => {
+    return new Set((projects || []).map((p) => p.id))
+  }, [projects])
+
   const projectItemCounts = useMemo(() => {
     const counts = {}
     if (!allWorkItems) return counts
-    for (const wi of allWorkItems) { counts[wi.project_id || '_none'] = (counts[wi.project_id || '_none'] || 0) + 1 }
+    for (const wi of allWorkItems) {
+      // ★ v1.5：只計算可見案件的項目（無案件的也計算）
+      if (wi.project_id && !visibleProjectIds.has(wi.project_id)) continue
+      counts[wi.project_id || '_none'] = (counts[wi.project_id || '_none'] || 0) + 1
+    }
     return counts
-  }, [allWorkItems])
+  }, [allWorkItems, visibleProjectIds])
 
   const pendingItems = useMemo(() => {
     if (!allWorkItems) return []
     let items = allWorkItems.filter((wi) => wi.status === '待處理' || wi.status === '進行中' || wi.status === '擱置')
+    // ★ v1.5：只顯示可見案件的待辦（無案件的也顯示）
+    items = items.filter((wi) => !wi.project_id || visibleProjectIds.has(wi.project_id))
     if (filterProjectId) items = items.filter((wi) => wi.project_id === filterProjectId)
     items.sort((a, b) => {
       const pa = PRIORITY_ORDER[a.priority] ?? 9, pb = PRIORITY_ORDER[b.priority] ?? 9
@@ -192,7 +212,7 @@ export default function WorkDashboard() {
       return 0
     })
     return items
-  }, [allWorkItems, filterProjectId])
+  }, [allWorkItems, filterProjectId, visibleProjectIds])
 
   const overdueCount = useMemo(() => {
     const today = format(new Date(), 'yyyy-MM-dd')
@@ -209,7 +229,7 @@ export default function WorkDashboard() {
     return map
   }, [workItemsMap, filterProjectId])
 
-  // ★ v1.4：判斷是否唯讀（全員模式下看別人的資料）
+  // ★ v1.4：判斷是否唯讀
   const isReadOnly = teamMode && filterUserId && filterUserId !== user?.id
 
   /* --- handlers --- */
@@ -251,10 +271,16 @@ export default function WorkDashboard() {
     } catch (err) { toast.error('完成失敗：' + err.message) }
   }
 
-  // ★ v1.4：切換 teamMode 時重置篩選
   function handleToggleTeamMode() {
     setTeamMode((prev) => !prev)
     setFilterUserId('')
+  }
+
+  // ★ v1.5：VisibilityModal 儲存後重新載入 profile + 案件
+  async function handleVisibilityClose() {
+    setShowVisibilityModal(false)
+    await refreshProfile()
+    mutateProjects()
   }
 
   const titleText = viewMode === 'month'
@@ -268,6 +294,7 @@ export default function WorkDashboard() {
         projects={projects || []} itemCounts={projectItemCounts}
         filterProjectId={filterProjectId} onProjectClick={handleProjectClick}
         onCreate={handleCreateProject} onEdit={handleEditProject} onArchive={handleArchiveProject}
+        onVisibility={() => setShowVisibilityModal(true)}
       />
 
       <div className="flex-1 overflow-auto p-5">
@@ -287,7 +314,6 @@ export default function WorkDashboard() {
           </div>
           <div className="flex items-center gap-2">
 
-            {/* ★ v1.4：boss/admin 團隊切換 + 使用者篩選 */}
             {canViewAll && (
               <>
                 <button onClick={handleToggleTeamMode}
@@ -348,7 +374,8 @@ export default function WorkDashboard() {
       />
 
       {selectedDate && !isReadOnly && (
-        <DailyLogModal date={selectedDate} existingLog={logMap[format(selectedDate, 'yyyy-MM-dd')]} onClose={handleDailyModalClose} />
+        <DailyLogModal date={selectedDate} existingLog={logMap[format(selectedDate, 'yyyy-MM-dd')]}
+          onClose={handleDailyModalClose} visibleProjects={projects || []} />
       )}
 
       {projectModalMode && (
@@ -356,17 +383,22 @@ export default function WorkDashboard() {
       )}
 
       {wiModalItem !== undefined && !isReadOnly && (
-        <WorkItemModal item={wiModalItem} onClose={handleWiModalClose} />
+        <WorkItemModal item={wiModalItem} onClose={handleWiModalClose} visibleProjects={projects || []} />
+      )}
+
+      {/* ★ v1.5：顯示/隱藏案件 Modal */}
+      {showVisibilityModal && user && (
+        <VisibilityModal userId={user.id} profile={profile} onClose={handleVisibilityClose} />
       )}
     </div>
   )
 }
 
 /* ================================================================
-   上區：案件方塊列（不變）
+   ★ v1.5 上區：案件方塊列（加 onVisibility）
    ================================================================ */
 
-function ProjectBar({ projects, itemCounts, filterProjectId, onProjectClick, onCreate, onEdit, onArchive }) {
+function ProjectBar({ projects, itemCounts, filterProjectId, onProjectClick, onCreate, onEdit, onArchive, onVisibility }) {
   const [hovered, setHovered] = useState(false)
   const totalItems = Object.values(itemCounts).reduce((sum, n) => sum + n, 0)
 
@@ -384,6 +416,11 @@ function ProjectBar({ projects, itemCounts, filterProjectId, onProjectClick, onC
           {filterProjectId && (
             <button onClick={() => onProjectClick(filterProjectId)} className="text-xs text-blue-500 hover:text-blue-700 transition-colors">✕ 取消篩選</button>
           )}
+          {/* ★ v1.5：顯示/隱藏案件按鈕 */}
+          <button onClick={onVisibility}
+            className="text-xs px-2.5 py-1 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors"
+            title="設定要顯示哪些案件"
+          >👁 篩選</button>
           <button onClick={onCreate} className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">＋ 新增案件</button>
         </div>
       </div>
@@ -445,6 +482,122 @@ function ProjectCard({ project, count, isActive, onFilter, onEdit, onArchive }) 
 }
 
 /* ================================================================
+   ★ v1.5 新增：顯示/隱藏案件 Modal
+   ================================================================ */
+
+function VisibilityModal({ userId, profile, onClose }) {
+  const [allowedProjects, setAllowedProjects] = useState([])
+  const [hiddenIds, setHiddenIds] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const allowed = await getAllowedProjects(userId)
+        setAllowedProjects(allowed)
+        setHiddenIds(profile?.hidden_projects || [])
+      } catch (err) {
+        console.warn('[VisibilityModal] 載入失敗:', err.message)
+        toast.error('載入失敗')
+      }
+      setLoading(false)
+    }
+    load()
+  }, [userId, profile])
+
+  function toggleProject(pid) {
+    setHiddenIds((prev) =>
+      prev.includes(pid) ? prev.filter((id) => id !== pid) : [...prev, pid]
+    )
+  }
+
+  function handleSelectAll() { setHiddenIds([]) }
+  function handleDeselectAll() { setHiddenIds(allowedProjects.map((p) => p.id)) }
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      // 只保留 allowedProjects 範圍內的 hiddenIds（避免殘留已移除案件的 ID）
+      const validHidden = hiddenIds.filter((id) => allowedProjects.some((p) => p.id === id))
+      await updateHiddenProjects(userId, validHidden)
+      toast.success('案件顯示設定已儲存')
+      onClose()
+    } catch (err) {
+      toast.error('儲存失敗：' + err.message)
+    }
+    setSaving(false)
+  }
+
+  const visibleCount = allowedProjects.length - hiddenIds.filter((id) => allowedProjects.some((p) => p.id === id)).length
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 max-h-[80vh] flex flex-col">
+
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div>
+            <h3 className="text-lg font-bold text-gray-800">案件顯示設定</h3>
+            <p className="text-xs text-gray-400 mt-0.5">
+              勾選要在工作總覽顯示的案件（{visibleCount}/{allowedProjects.length}）
+            </p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg transition-colors">✕</button>
+        </div>
+
+        <div className="flex-1 overflow-auto p-4">
+          {loading ? (
+            <p className="text-center text-gray-400 text-sm py-8">載入中...</p>
+          ) : allowedProjects.length === 0 ? (
+            <p className="text-center text-gray-400 text-sm py-8">無可用案件</p>
+          ) : (
+            <>
+              <div className="flex gap-2 mb-3">
+                <button onClick={handleSelectAll}
+                  className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors">全選</button>
+                <button onClick={handleDeselectAll}
+                  className="text-xs px-2 py-1 bg-gray-50 text-gray-500 rounded hover:bg-gray-100 transition-colors">全不選</button>
+              </div>
+              <div className="space-y-1">
+                {allowedProjects.map((p) => {
+                  const isHidden = hiddenIds.includes(p.id)
+                  return (
+                    <label key={p.id}
+                      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
+                        isHidden ? 'bg-gray-50 opacity-60' : 'bg-white hover:bg-blue-50'
+                      }`}
+                    >
+                      <input type="checkbox" checked={!isHidden} onChange={() => toggleProject(p.id)}
+                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                      <span className="text-base">{PROJECT_TYPE_ICON[p.type] || '📁'}</span>
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium text-gray-800">{p.name}</span>
+                        {p.type && <span className="text-xs text-gray-400 ml-2">{p.type}</span>}
+                        {p.clients && p.clients.length > 0 && (
+                          <p className="text-xs text-gray-400 truncate">{p.clients.map((c) => c.name).join('、')}</p>
+                        )}
+                      </div>
+                    </label>
+                  )
+                })}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 transition-colors">取消</button>
+          <button onClick={handleSave} disabled={saving}
+            className="px-5 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+          >{saving ? '儲存中...' : '儲存'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ================================================================
    案件 Modal（不變）
    ================================================================ */
 
@@ -499,48 +652,48 @@ function ProjectModal({ mode, project, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <h3 className="text-lg font-bold text-gray-800">{isEdit ? '編輯案件' : '新增案件'}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg transition-colors">✕</button>
         </div>
-        <div className="flex-1 overflow-auto p-6 space-y-4">
+        <div className="p-6 space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-1">案件名稱 <span className="text-red-500">*</span></label>
             <input type="text" value={form.name} onChange={(e) => handleChange('name', e.target.value)} placeholder="輸入案件名稱"
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-600 mb-2">案件分類</label>
-            <div className="flex gap-2">
+            <label className="block text-sm font-medium text-gray-600 mb-2">分類</label>
+            <div className="flex gap-2 flex-wrap">
               {TYPE_OPTIONS.map((t) => (
                 <button key={t} type="button" onClick={() => handleTypeChange(t)}
-                  className={`flex-1 py-2 rounded-lg text-xs font-medium transition-colors ${form.type === t ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-300' : 'bg-gray-50 text-gray-400 hover:bg-gray-100'}`}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    form.type === t ? 'bg-purple-100 text-purple-700 ring-1 ring-purple-300' : 'bg-gray-50 text-gray-400 hover:bg-gray-100'
+                  }`}
                 >{PROJECT_TYPE_ICON[t]} {t}</button>
               ))}
             </div>
           </div>
           {showClientSelect && (
             <div>
-              <label className="block text-sm font-medium text-gray-600 mb-1">客戶</label>
-              <div className="border border-gray-200 rounded-lg p-2 max-h-32 overflow-auto">
+              <label className="block text-sm font-medium text-gray-600 mb-2">
+                {isAutoClient ? '客戶（自動）' : '選擇客戶'}
+              </label>
+              <div className="max-h-40 overflow-auto border border-gray-200 rounded-lg p-2 space-y-1">
                 {(clients || []).map((c) => (
-                  <label key={c.id} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer text-sm transition-colors ${form.selectedClientIds.includes(c.id) ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50 text-gray-600'}`}>
-                    <input type="checkbox" checked={form.selectedClientIds.includes(c.id)} onChange={() => toggleClient(c.id)} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />{c.name}
+                  <label key={c.id} className={`flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-gray-50 ${isAutoClient ? 'opacity-50 pointer-events-none' : ''}`}>
+                    <input type="checkbox" checked={form.selectedClientIds.includes(c.id)} onChange={() => toggleClient(c.id)} disabled={isAutoClient}
+                      className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600" />
+                    <span className="text-sm text-gray-700">{c.name}</span>
                   </label>
                 ))}
               </div>
             </div>
           )}
-          {isAutoClient && (
-            <div>
-              <label className="block text-sm font-medium text-gray-600 mb-1">客戶</label>
-              <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600">世曦（自動帶入）</div>
-            </div>
-          )}
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-1">備註</label>
-            <textarea value={form.notes} rows={3} onChange={(e) => handleChange('notes', e.target.value)} placeholder="補充說明..."
+            <textarea value={form.notes} rows={2} onChange={(e) => handleChange('notes', e.target.value)} placeholder="備註..."
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
           </div>
         </div>
@@ -614,7 +767,6 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick, teamMode, user
                 ) : (
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-2 flex-wrap">
-                      {/* ★ v1.4：團隊模式顯示人名 */}
                       {teamMode && log.user_id && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 font-medium">
                           {userNameMap[log.user_id] || '?'}
@@ -822,7 +974,6 @@ function PendingPanel({ items, overdueCount, onItemClick, onCreateClick, onCompl
                   <div key={wi.id} onClick={() => onItemClick(wi)}
                     className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm cursor-pointer transition-colors hover:ring-1 hover:ring-blue-300 ${isOverdue ? 'bg-red-50' : 'bg-gray-50 hover:bg-blue-50'}`}
                   >
-                    {/* ★ v1.4：團隊模式顯示人名 */}
                     {teamMode && wi.user_id && (
                       <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 font-medium flex-shrink-0">
                         {userNameMap[wi.user_id] || '?'}
@@ -873,16 +1024,15 @@ function PendingPanel({ items, overdueCount, onItemClick, onCreateClick, onCompl
 }
 
 /* ================================================================
-   ★ v1.2 工作項目 Modal（不變）
+   ★ v1.5 工作項目 Modal（接收 visibleProjects prop）
    ================================================================ */
 
-function WorkItemModal({ item, onClose }) {
+function WorkItemModal({ item, onClose, visibleProjects }) {
   const isEdit = !!item
   const [form, setForm] = useState({
     name: '', status: '待處理', priority: '中', due_date: '', project_id: '', completion_date: '',
   })
   const [saving, setSaving] = useState(false)
-  const { data: projects } = useSWR('projects', getProjects)
 
   useEffect(() => {
     if (isEdit && item) {
@@ -1012,7 +1162,7 @@ function WorkItemModal({ item, onClose }) {
             <select value={form.project_id} onChange={(e) => handleChange('project_id', e.target.value)}
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">— 無 —</option>
-              {(projects || []).map((p) => (
+              {(visibleProjects || []).map((p) => (
                 <option key={p.id} value={p.id}>{p.name}{p.type ? ` (${p.type})` : ''}</option>
               ))}
             </select>
@@ -1036,10 +1186,10 @@ function WorkItemModal({ item, onClose }) {
 }
 
 /* ================================================================
-   日誌 Modal（不變）
+   ★ v1.5 日誌 Modal（接收 visibleProjects prop）
    ================================================================ */
 
-function DailyLogModal({ date, existingLog, onClose }) {
+function DailyLogModal({ date, existingLog, onClose, visibleProjects }) {
   const dateStr = format(date, 'yyyy-MM-dd')
   const dateDisplay = format(date, 'yyyy 年 M 月 d 日（EEEE）', { locale: zhTW })
 
@@ -1050,7 +1200,6 @@ function DailyLogModal({ date, existingLog, onClose }) {
   const [saving, setSaving] = useState(false)
   const [logId, setLogId] = useState(null)
   const [loaded, setLoaded] = useState(false)
-  const { data: projects } = useSWR('projects', getProjects)
 
   useEffect(() => {
     async function loadData() {
@@ -1197,7 +1346,7 @@ function DailyLogModal({ date, existingLog, onClose }) {
                       <select value={item.project_id || ''} onChange={(e) => handleItemChange(idx, 'project_id', e.target.value)}
                         className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-500">
                         <option value="">— 無關聯案件 —</option>
-                        {(projects || []).map((p) => <option key={p.id} value={p.id}>{p.name}{p.type ? ` (${p.type})` : ''}</option>)}
+                        {(visibleProjects || []).map((p) => <option key={p.id} value={p.id}>{p.name}{p.type ? ` (${p.type})` : ''}</option>)}
                       </select>
                     </div>
                     {form.work_items.length > 1 && (

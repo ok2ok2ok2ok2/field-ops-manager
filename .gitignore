@@ -1,24 +1,34 @@
-# Logs
-logs
+# 依賴
+node_modules/
+
+# 建構輸出
+dist/
+
+# PWA workbox 產出
+dev-dist/
+
+# 環境變數
+.env
+.env.local
+.env.*.local
+
+# Supabase CLI（本機執行檔）
+supabase.exe
+
+# Vercel
+.vercel/
+
+# 編輯器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS 暫存
+.DS_Store
+Thumbs.db
+
+# 日誌
 *.log
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?

@@ -1,14 +1,16 @@
 /**
  * 案件管理 API — 離線版
- * 版本: v3.0
- * 日期: 2026-03-10
+ * 版本: v4.0
+ * 日期: 2026-03-19
  * 檔案: src/api/projects.js
  *
+ * v4.0：新增 getVisibleProjects()（admin限制 + 使用者自訂兩層篩選）
+ *       新增 updateHiddenProjects()（更新使用者自訂隱藏）
  * v3.0：改為讀寫 IndexedDB
- *       客戶/設備關聯從本地 join 表取得
  */
 
 import { getAll, getOne, create, update, remove, replaceJoin } from '../lib/offlineApi'
+import { supabase } from '../lib/supabase'
 import db from '../lib/offlineDb'
 
 const TABLE = 'projects'
@@ -44,6 +46,94 @@ export async function getProjects() {
   return await attachClientsToList(filtered)
 }
 
+/**
+ * ★ v4.0：取得使用者可見案件（兩層篩選）
+ * 第一層：admin 限制（user_projects 有資料 = 被限制）
+ * 第二層：使用者自訂隱藏（profiles.hidden_projects）
+ *
+ * @param {string} userId - 當前使用者 ID
+ * @param {object} profile - 當前使用者 profile（含 hidden_projects）
+ * @returns {Array} 過濾後的案件列表
+ */
+export async function getVisibleProjects(userId, profile) {
+  // 先拿全部未封存案件
+  const allProjects = await getProjects()
+
+  if (!userId) return allProjects
+
+  // ── 第一層：admin 限制 ──
+  let allowed = allProjects
+  try {
+    const { data: userProjects, error } = await supabase
+      .from('user_projects')
+      .select('project_id')
+      .eq('user_id', userId)
+
+    if (!error && userProjects && userProjects.length > 0) {
+      // 有資料 = 被限制，只保留被允許的案件
+      const allowedIds = new Set(userProjects.map((up) => up.project_id))
+      allowed = allProjects.filter((p) => allowedIds.has(p.id))
+    }
+    // 無資料 = 看全部，不過濾
+  } catch (err) {
+    console.warn('[Projects] 查詢 user_projects 失敗，顯示全部:', err.message)
+  }
+
+  // ── 第二層：使用者自訂隱藏 ──
+  const hiddenProjects = profile?.hidden_projects || []
+  if (hiddenProjects.length > 0) {
+    const hiddenSet = new Set(hiddenProjects)
+    allowed = allowed.filter((p) => !hiddenSet.has(p.id))
+  }
+
+  return allowed
+}
+
+/**
+ * ★ v4.0：取得使用者的 admin 允許案件清單（不含自訂隱藏）
+ * 用於「顯示/隱藏案件」面板，讓使用者知道哪些是 admin 允許的
+ *
+ * @param {string} userId - 當前使用者 ID
+ * @returns {Array} admin 允許的案件列表（無自訂隱藏過濾）
+ */
+export async function getAllowedProjects(userId) {
+  const allProjects = await getProjects()
+
+  if (!userId) return allProjects
+
+  try {
+    const { data: userProjects, error } = await supabase
+      .from('user_projects')
+      .select('project_id')
+      .eq('user_id', userId)
+
+    if (!error && userProjects && userProjects.length > 0) {
+      const allowedIds = new Set(userProjects.map((up) => up.project_id))
+      return allProjects.filter((p) => allowedIds.has(p.id))
+    }
+  } catch (err) {
+    console.warn('[Projects] 查詢 user_projects 失敗:', err.message)
+  }
+
+  return allProjects
+}
+
+/**
+ * ★ v4.0：更新使用者自訂隱藏案件
+ * 直接寫 Supabase profiles.hidden_projects
+ *
+ * @param {string} userId - 使用者 ID
+ * @param {string[]} hiddenIds - 隱藏的案件 ID 陣列
+ */
+export async function updateHiddenProjects(userId, hiddenIds) {
+  const { error } = await supabase
+    .from('profiles')
+    .update({ hidden_projects: hiddenIds })
+    .eq('id', userId)
+
+  if (error) throw error
+}
+
 /** 讀取單一案件（含關聯客戶） */
 export async function getProject(id) {
   const project = await getOne(TABLE, id)
@@ -71,7 +161,6 @@ export async function updateProject(id, updates) {
 
 /** 刪除案件 */
 export async function deleteProject(id) {
-  // 同時清除關聯
   const clientJoins = await db.project_clients
     .where('project_id').equals(id).toArray()
   for (const j of clientJoins) {

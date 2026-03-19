@@ -1,9 +1,10 @@
 /**
  * App 主入口 — 路由設定
- * 版本: v3.0
- * 日期: 2026-03-16
+ * 版本: v4.0
+ * 日期: 2026-03-19
  * 檔案: src/App.jsx
  *
+ * v4.0：加入 /admin/users 使用者管理頁面
  * v3.0：加入 AuthProvider + Login 路由 + ProtectedRoute
  * v2.0：首頁改為 WorkDashboard
  */
@@ -17,6 +18,7 @@ import Login from './pages/Login'
 import WorkDashboard from './pages/WorkDashboard'
 import ClientList from './pages/ClientList'
 import DeviceList from './pages/DeviceList'
+import UserManagement from './pages/UserManagement'
 
 export default function App() {
   return (
@@ -39,6 +41,7 @@ export default function App() {
               <Route path="/" element={<WorkDashboard />} />
               <Route path="/clients" element={<ClientList />} />
               <Route path="/devices" element={<DeviceList />} />
+              <Route path="/admin/users" element={<UserManagement />} />
               {/* 舊路由重導 */}
               <Route path="/kanban" element={<Navigate to="/" replace />} />
               <Route path="/daily-log" element={<Navigate to="/" replace />} />

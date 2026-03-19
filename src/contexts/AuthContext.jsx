@@ -1,14 +1,15 @@
 /**
  * Auth 狀態管理
- * 版本: v1.5
- * 日期: 2026-03-17
+ * 版本: v1.6
+ * 日期: 2026-03-19
  * 檔案: src/contexts/AuthContext.jsx
  *
+ * v1.6：新增 refreshProfile()（P10 案件可見性設定後重新載入 profile）
  * v1.5：新增 isBoss / canViewAll（boss+admin 可檢視全員私人資料）
  * v1.4：分離 auth 偵測和 profile 載入
  */
 
-import { createContext, useContext, useState, useEffect, useRef } from 'react'
+import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import db from '../lib/offlineDb'
 import { fullSync } from '../lib/syncManager'
@@ -112,6 +113,26 @@ export function AuthProvider({ children }) {
     setProfile(null)
   }
 
+  /**
+   * ★ v1.6：重新載入 profile（例如更新 hidden_projects 後呼叫）
+   */
+  const refreshProfile = useCallback(async () => {
+    const uid = user?.id
+    if (!uid) return
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', uid)
+        .single()
+      if (!error && data) {
+        setProfile(data)
+      }
+    } catch (err) {
+      console.warn('[Auth] refreshProfile 失敗:', err.message)
+    }
+  }, [user])
+
   const role = profile?.role || 'user'
 
   const value = {
@@ -120,6 +141,7 @@ export function AuthProvider({ children }) {
     loading,
     signIn,
     signOut,
+    refreshProfile,    // ★ v1.6
     role,
     isAdmin: role === 'admin',
     isBoss: role === 'boss',
