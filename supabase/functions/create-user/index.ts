@@ -1,12 +1,15 @@
 /**
  * Edge Function: create-user
- * 版本: v1.0
- * 日期: 2026-03-19
+ * 版本: v1.1
+ * 日期: 2026-03-23
  * 用途: Admin 前端呼叫此 function 建立新使用者
  *       使用 service_role key（伺服器端安全存取）
+ *
+ * v1.1：鎖定 supabase-js@2.49.1 + 改用 adminClient.auth.getUser(token) 驗證
+ * v1.0：初版
  */
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,31 +27,31 @@ Deno.serve(async (req) => {
     // 驗證呼叫者身份（必須是 admin）
     const authHeader = req.headers.get("Authorization")
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: "未授權" }), {
+      return new Response(JSON.stringify({ error: "未授權：缺少 Authorization header" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     }
 
-    // 用呼叫者的 token 建立 client 來檢查身份
+    const token = authHeader.replace("Bearer ", "")
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!
-    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 
-    const callerClient = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } },
-    })
+    // ★ v1.1：用 service_role client + getUser(token) 驗證呼叫者
+    // 這比用 anon key + global headers 更可靠
+    const adminClient = createClient(supabaseUrl, supabaseServiceKey)
 
-    const { data: { user: caller }, error: authErr } = await callerClient.auth.getUser()
+    const { data: { user: caller }, error: authErr } = await adminClient.auth.getUser(token)
     if (authErr || !caller) {
-      return new Response(JSON.stringify({ error: "驗證失敗" }), {
+      return new Response(JSON.stringify({ error: "驗證失敗：" + (authErr?.message || "無效 token") }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     }
 
     // 檢查是否為 admin
-    const { data: callerProfile } = await callerClient
+    const { data: callerProfile } = await adminClient
       .from("profiles")
       .select("role")
       .eq("id", caller.id)
@@ -72,8 +75,6 @@ Deno.serve(async (req) => {
     }
 
     // 用 service_role 建立使用者
-    const adminClient = createClient(supabaseUrl, supabaseServiceKey)
-
     const { data: newUser, error: createErr } = await adminClient.auth.admin.createUser({
       email,
       password,
@@ -88,11 +89,13 @@ Deno.serve(async (req) => {
       })
     }
 
-    // 更新 profile 的 role（trigger 預設建 'user'）
-    if (role && role !== "user" && newUser.user) {
+    // 更新 profile 的 role 和 display_name（trigger 預設建 'user'）
+    if (newUser.user) {
+      const updates = { display_name: display_name || email.split("@")[0] }
+      if (role && role !== "user") updates.role = role
       await adminClient
         .from("profiles")
-        .update({ role, display_name: display_name || email.split("@")[0] })
+        .update(updates)
         .eq("id", newUser.user.id)
     }
 
@@ -109,7 +112,7 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     )
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
+    return new Response(JSON.stringify({ error: "伺服器錯誤：" + err.message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })

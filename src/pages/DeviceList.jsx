@@ -1,8 +1,12 @@
 /**
  * 設備管理頁面
- * 版本: v1.5
- * 日期: 2025-03-04
+ * 版本: v1.7
+ * 日期: 2026-03-24
  * 檔案: src/pages/DeviceList.jsx
+ *
+ * v1.7 變更：
+ *  - 維護記錄入口移到狀態欄旁邊（同一行），用 device_code 帶參數篩選
+ *  - 移除底部維護記錄佔位區塊
  *
  * v1.5 修改：
  *  - 匯入策略改為：device_code 匹配，有就更新、沒有就新增
@@ -10,6 +14,7 @@
  */
 
 import { useState, useMemo, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import useSWR from 'swr'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -360,6 +365,7 @@ function DeviceRow({ device, clientName, isActive, onClick }) {
 /* ========== 編輯 Modal ========== */
 
 function DeviceEditModal({ device, clients, onClose, onSave, onDelete }) {
+  const navigate = useNavigate()
   const [form, setForm] = useState({ ...device })
   const [saving, setSaving] = useState(false)
   const [showLocation, setShowLocation] = useState(!!device.location)
@@ -374,6 +380,12 @@ function DeviceEditModal({ device, clients, onClose, onSave, onDelete }) {
     if (!updates.client_id) updates.client_id = null
     await onSave(device.id, updates)
     setSaving(false)
+  }
+
+  function handleGoMaintenance() {
+    onClose()
+    const searchVal = device.device_code || ''
+    navigate(searchVal ? `/maintenance?search=${encodeURIComponent(searchVal)}` : '/maintenance')
   }
 
   const createdAt = device.created_at ? format(new Date(device.created_at), 'yyyy/MM/dd HH:mm', { locale: zhTW }) : '—'
@@ -412,10 +424,13 @@ function DeviceEditModal({ device, clients, onClose, onSave, onDelete }) {
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >{STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}</select>
             </FieldBlock>
-            <FieldBlock label="購買日期">
-              <input type="date" value={form.purchase_date || ''} onChange={(e) => handleChange('purchase_date', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            </FieldBlock>
+            <div>
+              <label className="block text-sm font-medium text-gray-600 mb-1">維護記錄</label>
+              <button onClick={handleGoMaintenance}
+                className="w-full px-3 py-2 text-sm text-blue-600 font-medium bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors">
+                🔬 查看維護記錄{device.device_code ? `（${device.device_code}）` : ''}
+              </button>
+            </div>
 
             <div className="col-span-2">
               <FieldBlock label="所屬客戶">
@@ -454,10 +469,10 @@ function DeviceEditModal({ device, clients, onClose, onSave, onDelete }) {
               </FieldBlock>
             </div>
 
-            <div className="col-span-2 pt-2 border-t border-gray-100">
-              <p className="text-sm font-medium text-gray-600 mb-2">維護記錄</p>
-              <p className="text-xs text-gray-400 py-4 text-center bg-gray-50 rounded-lg">將在 Step 2 開發</p>
-            </div>
+            <FieldBlock label="購買日期">
+              <input type="date" value={form.purchase_date || ''} onChange={(e) => handleChange('purchase_date', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </FieldBlock>
           </div>
         </div>
 

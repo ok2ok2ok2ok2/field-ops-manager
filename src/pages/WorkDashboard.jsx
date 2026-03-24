@@ -1,9 +1,14 @@
 /**
  * 三合一工作總覽頁面
- * 版本: v1.5
- * 日期: 2026-03-19
+ * 版本: v1.6
+ * 日期: 2026-03-24
  * 檔案: src/pages/WorkDashboard.jsx
  *
+ * v1.6：工作日誌多人顯示優化
+ *       - logMap 結構改為 {日期: [log...]} 陣列，修復團隊模式同日多人只顯示最後一筆
+ *       - WeekView：多人同日橫向排列區塊 + hover 切換顯示詳情
+ *       - MonthView：加 hover popup 彈出詳情 + 多人各自摘要
+ *       - DailyLogModal 入口：個人模式取自己的日誌，避免誤編他人
  * v1.5：P10 案件可見性 — admin限制(user_projects) + 使用者自訂(hidden_projects) 兩層篩選
  *       ProjectBar 加「👁 顯示/隱藏」按鈕 + VisibilityModal
  * v1.4：boss/admin 檢視模式（我的 / 全員）+ 使用者篩選 + 唯讀防護
@@ -174,10 +179,14 @@ export default function WorkDashboard() {
     return map
   }, [logWorkItems])
 
+  // ★ v1.6：logMap 改為陣列格式，支援同日多人日誌
   const logMap = useMemo(() => {
     const map = {}
     if (!logs) return map
-    for (const log of logs) map[log.log_date] = log
+    for (const log of logs) {
+      if (!map[log.log_date]) map[log.log_date] = []
+      map[log.log_date].push(log)
+    }
     return map
   }, [logs])
 
@@ -374,7 +383,11 @@ export default function WorkDashboard() {
       />
 
       {selectedDate && !isReadOnly && (
-        <DailyLogModal date={selectedDate} existingLog={logMap[format(selectedDate, 'yyyy-MM-dd')]}
+        <DailyLogModal date={selectedDate}
+          existingLog={(() => {
+            const logsForDate = logMap[format(selectedDate, 'yyyy-MM-dd')] || []
+            return logsForDate.find((l) => l.user_id === user?.id) || (logsForDate.length === 1 && !teamMode ? logsForDate[0] : null)
+          })()}
           onClose={handleDailyModalClose} visibleProjects={projects || []} />
       )}
 
@@ -708,11 +721,12 @@ function ProjectModal({ mode, project, onClose }) {
 }
 
 /* ================================================================
-   ★ v1.4 中區：週視圖（加 teamMode 人名標籤）
+   ★ v1.6 中區：週視圖（logMap 陣列 + 團隊多人橫排 + hover popup）
    ================================================================ */
 
 function WeekView({ weekStart, logMap, workItemsMap, onDateClick, teamMode, userNameMap }) {
   const [hoveredIdx, setHoveredIdx] = useState(null)
+  const [hoveredLogId, setHoveredLogId] = useState(null)
   const days = []
   for (let i = 0; i < 7; i++) days.push(addDays(weekStart, i))
 
@@ -720,12 +734,11 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick, teamMode, user
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       {days.map((d, idx) => {
         const dateStr = format(d, 'yyyy-MM-dd')
-        const log = logMap[dateStr]
+        const dayLogs = logMap[dateStr] || []
         const today = isToday(d)
         const dayOfWeek = d.getDay()
         const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
-        const items = log ? (workItemsMap[log.id] || []) : []
-        const hasData = !!log
+        const hasData = dayLogs.length > 0
         const isHovered = hoveredIdx === idx
 
         const rowMinHeight = isHovered ? 120 : (hasData ? 80 : 48)
@@ -734,7 +747,7 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick, teamMode, user
           <div key={dateStr}
             className="relative border-b border-gray-50 last:border-b-0"
             onMouseEnter={() => setHoveredIdx(idx)}
-            onMouseLeave={() => setHoveredIdx(null)}
+            onMouseLeave={() => { setHoveredIdx(null); setHoveredLogId(null) }}
           >
             <div
               onClick={() => onDateClick(d)}
@@ -743,6 +756,7 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick, teamMode, user
               }`}
               style={{ minHeight: rowMinHeight }}
             >
+              {/* 左側日期區塊 */}
               <div className={`flex-shrink-0 p-3 flex flex-col items-center justify-center border-r border-gray-50 transition-all duration-200 ${
                 isWeekend ? 'bg-red-50/30' : ''
               }`} style={{ width: isHovered ? 100 : 80 }}>
@@ -759,94 +773,85 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick, teamMode, user
                 </span>
               </div>
 
+              {/* 右側內容區塊 */}
               <div className="flex-1 p-3">
-                {!log ? (
+                {!hasData ? (
                   <p className={`text-gray-300 pt-1 transition-all duration-200 ${isHovered ? 'text-sm' : 'text-xs'}`}>
                     {teamMode ? '' : '點擊新增日誌'}
                   </p>
+                ) : dayLogs.length === 1 ? (
+                  /* 單人：維持原本排版 */
+                  <WeekDayLogBlock log={dayLogs[0]} items={workItemsMap[dayLogs[0].id] || []}
+                    isHovered={isHovered} teamMode={teamMode} userNameMap={userNameMap}
+                    onHoverLog={setHoveredLogId} />
                 ) : (
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {teamMode && log.user_id && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 font-medium">
-                          {userNameMap[log.user_id] || '?'}
-                        </span>
-                      )}
-                      <span className={`rounded-full ${WORK_TYPE_STYLE[log.work_type] || 'bg-gray-400'} ${isHovered ? 'w-2.5 h-2.5' : 'w-2 h-2'}`} />
-                      <span className={`font-medium text-gray-600 transition-all duration-200 ${isHovered ? 'text-sm' : 'text-xs'}`}>
-                        {log.work_type}
-                      </span>
-                      {log.field_hours && (
-                        <span className={`text-gray-400 transition-all duration-200 ${isHovered ? 'text-sm' : 'text-xs'}`}>
-                          {log.field_start?.substring(0, 5)}–{log.field_end?.substring(0, 5)}（{log.field_hours}h）
-                        </span>
-                      )}
-                      {(log.field_locations || []).length > 0 && (
-                        <span className={`text-blue-500 transition-all duration-200 ${isHovered ? 'text-sm' : 'text-xs'}`}>
-                          📍 {log.field_locations.join('、')}
-                        </span>
-                      )}
-                    </div>
-                    {items.length > 0 && (
-                      <div className="space-y-0.5 pl-4">
-                        {items.map((item) => (
-                          <p key={item.id} className={`text-gray-500 transition-all duration-200 ${isHovered ? 'text-sm' : 'text-xs'}`}>
-                            • {item.name}
-                            {item.projects && <span className="text-blue-400 ml-1">[{item.projects.name}]</span>}
-                          </p>
-                        ))}
+                  /* 多人：橫向排列 */
+                  <div className="flex gap-3 flex-wrap">
+                    {dayLogs.map((log) => (
+                      <div key={log.id} className="flex-1 min-w-0"
+                        onMouseEnter={(e) => { e.stopPropagation(); setHoveredLogId(log.id) }}
+                        onMouseLeave={(e) => { e.stopPropagation(); setHoveredLogId(null) }}
+                      >
+                        <WeekDayLogBlock log={log} items={workItemsMap[log.id] || []}
+                          isHovered={isHovered} teamMode={teamMode} userNameMap={userNameMap}
+                          onHoverLog={setHoveredLogId} compact />
                       </div>
-                    )}
-                    {log.work_summary && (
-                      <p className={`text-gray-400 pl-4 transition-all duration-200 ${isHovered ? 'text-sm' : 'text-xs'}`}>
-                        💬 {log.work_summary}
-                      </p>
-                    )}
+                    ))}
                   </div>
                 )}
               </div>
             </div>
 
-            {isHovered && hasData && items.length > 0 && (
-              <div className="absolute right-4 top-2 z-10 bg-white border border-gray-200 rounded-xl shadow-xl p-4 w-72 pointer-events-none">
-                <div className="flex items-center gap-2 mb-2">
-                  {teamMode && log.user_id && (
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 font-medium">
-                      {userNameMap[log.user_id] || '?'}
+            {/* Hover popup：顯示被 hover 的那筆 log 詳情 */}
+            {isHovered && hasData && (() => {
+              const targetLog = hoveredLogId
+                ? dayLogs.find((l) => l.id === hoveredLogId)
+                : dayLogs[0]
+              if (!targetLog) return null
+              const targetItems = workItemsMap[targetLog.id] || []
+              return (
+                <div className="absolute right-4 top-2 z-10 bg-white border border-gray-200 rounded-xl shadow-xl p-4 w-72 pointer-events-none">
+                  <div className="flex items-center gap-2 mb-2">
+                    {teamMode && targetLog.user_id && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 font-medium">
+                        {userNameMap[targetLog.user_id] || '?'}
+                      </span>
+                    )}
+                    <span className={`w-3 h-3 rounded-full ${WORK_TYPE_STYLE[targetLog.work_type] || 'bg-gray-400'}`} />
+                    <span className="text-sm font-bold text-gray-800">
+                      {format(d, 'M/d（E）', { locale: zhTW })}
                     </span>
+                    <span className="text-sm text-gray-500">{targetLog.work_type}</span>
+                  </div>
+                  {targetLog.field_hours && (
+                    <p className="text-sm text-gray-500 mb-1">
+                      🕐 {targetLog.field_start?.substring(0, 5)}–{targetLog.field_end?.substring(0, 5)}（{targetLog.field_hours}h）
+                    </p>
                   )}
-                  <span className={`w-3 h-3 rounded-full ${WORK_TYPE_STYLE[log.work_type] || 'bg-gray-400'}`} />
-                  <span className="text-sm font-bold text-gray-800">
-                    {format(d, 'M/d（E）', { locale: zhTW })}
-                  </span>
-                  <span className="text-sm text-gray-500">{log.work_type}</span>
-                </div>
-                {log.field_hours && (
-                  <p className="text-sm text-gray-500 mb-1">
-                    🕐 {log.field_start?.substring(0, 5)}–{log.field_end?.substring(0, 5)}（{log.field_hours}h）
-                  </p>
-                )}
-                {(log.field_locations || []).length > 0 && (
-                  <p className="text-sm text-blue-500 mb-2">📍 {log.field_locations.join('、')}</p>
-                )}
-                <div className="border-t border-gray-100 pt-2 space-y-1">
-                  {items.map((item) => (
-                    <div key={item.id} className="flex items-start gap-1.5">
-                      <span className="text-sm text-gray-400 mt-0.5">•</span>
-                      <div>
-                        <span className="text-sm text-gray-700">{item.name}</span>
-                        {item.projects && (
-                          <span className="text-xs text-blue-400 ml-1">[{item.projects.name}]</span>
-                        )}
-                      </div>
+                  {(targetLog.field_locations || []).length > 0 && (
+                    <p className="text-sm text-blue-500 mb-2">📍 {targetLog.field_locations.join('、')}</p>
+                  )}
+                  {targetItems.length > 0 && (
+                    <div className="border-t border-gray-100 pt-2 space-y-1">
+                      {targetItems.map((item) => (
+                        <div key={item.id} className="flex items-start gap-1.5">
+                          <span className="text-sm text-gray-400 mt-0.5">•</span>
+                          <div>
+                            <span className="text-sm text-gray-700">{item.name}</span>
+                            {item.projects && (
+                              <span className="text-xs text-blue-400 ml-1">[{item.projects.name}]</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
+                  {targetLog.work_summary && (
+                    <p className="text-sm text-gray-400 mt-2 pt-2 border-t border-gray-100">💬 {targetLog.work_summary}</p>
+                  )}
                 </div>
-                {log.work_summary && (
-                  <p className="text-sm text-gray-400 mt-2 pt-2 border-t border-gray-100">💬 {log.work_summary}</p>
-                )}
-              </div>
-            )}
+              )
+            })()}
           </div>
         )
       })}
@@ -854,11 +859,59 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick, teamMode, user
   )
 }
 
+/** 週視圖中單筆日誌的行內顯示區塊（提取為子元件避免重複） */
+function WeekDayLogBlock({ log, items, isHovered, teamMode, userNameMap, onHoverLog, compact }) {
+  return (
+    <div className={`space-y-1.5 ${compact ? 'p-2 rounded-lg bg-gray-50/80 border border-gray-100' : ''}`}>
+      <div className="flex items-center gap-2 flex-wrap">
+        {teamMode && log.user_id && (
+          <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 font-medium">
+            {userNameMap[log.user_id] || '?'}
+          </span>
+        )}
+        <span className={`rounded-full ${WORK_TYPE_STYLE[log.work_type] || 'bg-gray-400'} ${isHovered ? 'w-2.5 h-2.5' : 'w-2 h-2'}`} />
+        <span className={`font-medium text-gray-600 transition-all duration-200 ${isHovered ? 'text-sm' : 'text-xs'}`}>
+          {log.work_type}
+        </span>
+        {log.field_hours && (
+          <span className={`text-gray-400 transition-all duration-200 ${isHovered ? 'text-sm' : 'text-xs'}`}>
+            {log.field_start?.substring(0, 5)}–{log.field_end?.substring(0, 5)}（{log.field_hours}h）
+          </span>
+        )}
+        {!compact && (log.field_locations || []).length > 0 && (
+          <span className={`text-blue-500 transition-all duration-200 ${isHovered ? 'text-sm' : 'text-xs'}`}>
+            📍 {log.field_locations.join('、')}
+          </span>
+        )}
+      </div>
+      {items.length > 0 && (
+        <div className="space-y-0.5 pl-4">
+          {(compact ? items.slice(0, 2) : items).map((item) => (
+            <p key={item.id} className={`text-gray-500 transition-all duration-200 ${isHovered ? 'text-sm' : 'text-xs'}`}>
+              • {item.name}
+              {item.projects && <span className="text-blue-400 ml-1">[{item.projects.name}]</span>}
+            </p>
+          ))}
+          {compact && items.length > 2 && (
+            <p className="text-xs text-gray-400">...還有 {items.length - 2} 項</p>
+          )}
+        </div>
+      )}
+      {!compact && log.work_summary && (
+        <p className={`text-gray-400 pl-4 transition-all duration-200 ${isHovered ? 'text-sm' : 'text-xs'}`}>
+          💬 {log.work_summary}
+        </p>
+      )}
+    </div>
+  )
+}
+
 /* ================================================================
-   中區：月視圖（v1.4 加 teamMode 人名）
+   ★ v1.6 中區：月視圖（logMap 陣列 + hover popup + 多人摘要）
    ================================================================ */
 
 function MonthView({ currentMonth, logMap, workItemsMap, onDateClick, teamMode, userNameMap }) {
+  const [hoveredDateStr, setHoveredDateStr] = useState(null)
   const monthStart = startOfMonth(currentMonth)
   const monthEnd = endOfMonth(currentMonth)
   const calStart = startOfWeek(monthStart, { weekStartsOn: 0 })
@@ -877,31 +930,90 @@ function MonthView({ currentMonth, logMap, workItemsMap, onDateClick, teamMode, 
       <div className="grid grid-cols-7">
         {days.map((d) => {
           const dateStr = format(d, 'yyyy-MM-dd')
-          const log = logMap[dateStr]
+          const dayLogs = logMap[dateStr] || []
           const inMonth = isSameMonth(d, currentMonth)
           const today = isToday(d)
           const dayOfWeek = d.getDay()
           const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
-          const items = log ? (workItemsMap[log.id] || []) : []
+          const hasData = dayLogs.length > 0 && inMonth
+          const isHovered = hoveredDateStr === dateStr
+
           return (
-            <div key={dateStr} onClick={() => onDateClick(d)}
-              className={`min-h-24 p-2 border-b border-r border-gray-50 cursor-pointer transition-colors ${inMonth ? 'hover:bg-blue-50' : 'bg-gray-50/50'}`}>
+            <div key={dateStr}
+              className={`relative min-h-24 p-2 border-b border-r border-gray-50 cursor-pointer transition-colors ${inMonth ? 'hover:bg-blue-50' : 'bg-gray-50/50'}`}
+              onClick={() => onDateClick(d)}
+              onMouseEnter={() => setHoveredDateStr(dateStr)}
+              onMouseLeave={() => setHoveredDateStr(null)}
+            >
               <span className={`text-sm font-medium w-7 h-7 flex items-center justify-center rounded-full ${
                 today ? 'bg-blue-600 text-white' : !inMonth ? 'text-gray-300' : isWeekend ? 'text-red-400' : 'text-gray-700'
               }`}>{format(d, 'd')}</span>
-              {log && inMonth && (
-                <div className="space-y-0.5 mt-1">
-                  <div className="flex items-center gap-1">
-                    {teamMode && log.user_id && (
-                      <span className="text-xs px-1 py-0 rounded bg-purple-100 text-purple-600" style={{ fontSize: 10 }}>
-                        {userNameMap[log.user_id] || '?'}
-                      </span>
-                    )}
-                    <span className={`w-2 h-2 rounded-full ${WORK_TYPE_STYLE[log.work_type] || 'bg-gray-400'}`} />
-                    <span className="text-xs text-gray-500">{log.work_type}</span>
-                    {log.field_hours && <span className="text-xs text-gray-400">{log.field_hours}h</span>}
+
+              {/* 格子內摘要 */}
+              {hasData && dayLogs.map((log) => {
+                const items = workItemsMap[log.id] || []
+                return (
+                  <div key={log.id} className="space-y-0.5 mt-1">
+                    <div className="flex items-center gap-1">
+                      {teamMode && log.user_id && (
+                        <span className="text-xs px-1 py-0 rounded bg-purple-100 text-purple-600" style={{ fontSize: 10 }}>
+                          {userNameMap[log.user_id] || '?'}
+                        </span>
+                      )}
+                      <span className={`w-2 h-2 rounded-full ${WORK_TYPE_STYLE[log.work_type] || 'bg-gray-400'}`} />
+                      <span className="text-xs text-gray-500">{log.work_type}</span>
+                      {log.field_hours && <span className="text-xs text-gray-400">{log.field_hours}h</span>}
+                    </div>
+                    {items.length > 0 && <p className="text-xs text-gray-400 pl-3 truncate">{items.map((it) => it.name).join('、')}</p>}
                   </div>
-                  {items.length > 0 && <p className="text-xs text-gray-400 pl-3 truncate">{items.map((it) => it.name).join('、')}</p>}
+                )
+              })}
+
+              {/* Hover popup */}
+              {isHovered && hasData && (
+                <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 z-20 bg-white border border-gray-200 rounded-xl shadow-xl p-4 w-72 pointer-events-none"
+                  style={{ minWidth: 280 }}>
+                  <p className="text-sm font-bold text-gray-800 mb-2">
+                    {format(d, 'M/d（E）', { locale: zhTW })}
+                  </p>
+                  {dayLogs.map((log) => {
+                    const items = workItemsMap[log.id] || []
+                    return (
+                      <div key={log.id} className={`${dayLogs.length > 1 ? 'mb-3 pb-3 border-b border-gray-100 last:border-b-0 last:mb-0 last:pb-0' : ''}`}>
+                        <div className="flex items-center gap-2 mb-1">
+                          {teamMode && log.user_id && (
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 font-medium">
+                              {userNameMap[log.user_id] || '?'}
+                            </span>
+                          )}
+                          <span className={`w-2.5 h-2.5 rounded-full ${WORK_TYPE_STYLE[log.work_type] || 'bg-gray-400'}`} />
+                          <span className="text-sm text-gray-600">{log.work_type}</span>
+                        </div>
+                        {log.field_hours && (
+                          <p className="text-xs text-gray-500 mb-1">
+                            🕐 {log.field_start?.substring(0, 5)}–{log.field_end?.substring(0, 5)}（{log.field_hours}h）
+                          </p>
+                        )}
+                        {(log.field_locations || []).length > 0 && (
+                          <p className="text-xs text-blue-500 mb-1">📍 {log.field_locations.join('、')}</p>
+                        )}
+                        {items.length > 0 && (
+                          <div className="space-y-0.5">
+                            {items.map((item) => (
+                              <div key={item.id} className="flex items-start gap-1">
+                                <span className="text-xs text-gray-400 mt-0.5">•</span>
+                                <span className="text-xs text-gray-700">{item.name}</span>
+                                {item.projects && <span className="text-xs text-blue-400 ml-1">[{item.projects.name}]</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {log.work_summary && (
+                          <p className="text-xs text-gray-400 mt-1">💬 {log.work_summary}</p>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>

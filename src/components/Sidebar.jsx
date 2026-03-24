@@ -1,9 +1,10 @@
 /**
  * 收縮式側邊導航欄
- * 版本: v4.0
- * 日期: 2026-03-19
+ * 版本: v5.0
+ * 日期: 2026-03-22
  * 檔案: src/components/Sidebar.jsx
  *
+ * v5.0：加入「維護記錄」導航項
  * v4.0：admin 顯示「使用者管理」導航項 + boss 角色標籤
  * v3.0：底部顯示使用者名稱 + 登出按鈕
  * v2.0：hover 展開 overlay
@@ -15,9 +16,10 @@ import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
 
 const NAV_ITEMS = [
-  { path: '/',        label: '工作總覽', icon: '📋' },
-  { path: '/clients', label: '客戶管理', icon: '👥' },
-  { path: '/devices', label: '設備管理', icon: '📷' },
+  { path: '/',             label: '工作總覽',   icon: '📋' },
+  { path: '/clients',      label: '客戶管理',   icon: '👥' },
+  { path: '/devices',      label: '設備管理',   icon: '📷' },
+  { path: '/maintenance',  label: '維護記錄',   icon: '🔬' },
 ]
 
 const ADMIN_NAV_ITEMS = [
@@ -103,7 +105,6 @@ export default function Sidebar() {
         {/* 底部：使用者資訊 + 登出 */}
         <div className="px-3 py-3 border-t border-white/10 overflow-hidden">
           <div className="flex items-center gap-3 px-1">
-            {/* 頭像圓圈 */}
             <div className="w-8 h-8 flex-shrink-0 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold">
               {displayName.charAt(0)}
             </div>
