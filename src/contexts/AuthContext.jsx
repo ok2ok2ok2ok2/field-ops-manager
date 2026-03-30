@@ -1,9 +1,10 @@
 /**
  * Auth 狀態管理
- * 版本: v1.6
- * 日期: 2026-03-19
+ * 版本: v1.7
+ * 日期: 2026-03-25
  * 檔案: src/contexts/AuthContext.jsx
  *
+ * v1.7：clearLocalDatabase 加 repair_orders
  * v1.6：新增 refreshProfile()（P10 案件可見性設定後重新載入 profile）
  * v1.5：新增 isBoss / canViewAll（boss+admin 可檢視全員私人資料）
  * v1.4：分離 auth 偵測和 profile 載入
@@ -48,7 +49,6 @@ export function AuthProvider({ children }) {
       }
       prevUidRef.current = uid
 
-      // 無使用者 → 結束
       if (!uid) {
         setProfile(null)
         return
@@ -89,7 +89,7 @@ export function AuthProvider({ children }) {
   async function clearLocalDatabase() {
     try {
       const tables = ['clients', 'projects', 'devices', 'daily_logs', 'work_items',
-        'project_clients', 'project_devices', 'sync_meta', 'delete_queue']
+        'repair_orders', 'project_clients', 'project_devices', 'sync_meta', 'delete_queue']
       for (const table of tables) {
         if (db[table]) await db[table].clear()
       }
@@ -141,7 +141,7 @@ export function AuthProvider({ children }) {
     loading,
     signIn,
     signOut,
-    refreshProfile,    // ★ v1.6
+    refreshProfile,
     role,
     isAdmin: role === 'admin',
     isBoss: role === 'boss',

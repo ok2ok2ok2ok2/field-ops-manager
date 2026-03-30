@@ -1,9 +1,10 @@
 /**
  * 同步管理器 — 雙向同步 IndexedDB ↔ Supabase
- * 版本: v4.0
- * 日期: 2026-03-17
+ * 版本: v5.0
+ * 日期: 2026-03-25
  * 檔案: src/lib/syncManager.js
  *
+ * v5.0：PRIVATE_TABLES 加入 repair_orders（送修單）
  * v4.0：boss/admin pullRemote 拉全員私人表（唯讀用途）
  * v3.0：共用表 push 加樂觀鎖（version 衝突偵測）
  * v2.0：私人表 pull 加 user_id 篩選
@@ -15,7 +16,7 @@ import db from './offlineDb'
 import toast from 'react-hot-toast'
 
 const SHARED_TABLES = ['clients', 'projects', 'devices']
-const PRIVATE_TABLES = ['daily_logs', 'work_items']
+const PRIVATE_TABLES = ['daily_logs', 'work_items', 'repair_orders']
 const JOIN_TABLES = ['project_clients', 'project_devices']
 
 const ALL_MAIN_TABLES = [...SHARED_TABLES, ...PRIVATE_TABLES]

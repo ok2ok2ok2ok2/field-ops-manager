@@ -1,9 +1,10 @@
 /**
  * App 主入口 — 路由設定
- * 版本: v5.0
- * 日期: 2026-03-22
+ * 版本: v6.0
+ * 日期: 2026-03-25
  * 檔案: src/App.jsx
  *
+ * v6.0：加入 /repair-orders 送修單頁面
  * v5.0：加入 /maintenance 維護記錄頁面
  * v4.0：加入 /admin/users 使用者管理頁面
  * v3.0：加入 AuthProvider + Login 路由 + ProtectedRoute
@@ -21,6 +22,7 @@ import ClientList from './pages/ClientList'
 import DeviceList from './pages/DeviceList'
 import UserManagement from './pages/UserManagement'
 import MaintenanceList from './pages/MaintenanceList'
+import RepairOrderList from './pages/RepairOrderList'
 
 export default function App() {
   return (
@@ -44,6 +46,7 @@ export default function App() {
               <Route path="/clients" element={<ClientList />} />
               <Route path="/devices" element={<DeviceList />} />
               <Route path="/maintenance" element={<MaintenanceList />} />
+              <Route path="/repair-orders" element={<RepairOrderList />} />
               <Route path="/admin/users" element={<UserManagement />} />
               {/* 舊路由重導 */}
               <Route path="/kanban" element={<Navigate to="/" replace />} />

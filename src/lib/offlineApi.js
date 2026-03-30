@@ -12,7 +12,7 @@
 import db from './offlineDb'
 import { supabase } from './supabase'
 
-const PRIVATE_TABLES = ['daily_logs', 'work_items', 'maintenance_records']
+const PRIVATE_TABLES = ['daily_logs', 'work_items', 'maintenance_records', 'repair_orders']
 const SHARED_TABLES = ['clients', 'projects', 'devices']
 
 /**

@@ -1,9 +1,10 @@
 /**
  * 收縮式側邊導航欄
- * 版本: v5.0
- * 日期: 2026-03-22
+ * 版本: v6.0
+ * 日期: 2026-03-25
  * 檔案: src/components/Sidebar.jsx
  *
+ * v6.0：加入「送修單」導航項
  * v5.0：加入「維護記錄」導航項
  * v4.0：admin 顯示「使用者管理」導航項 + boss 角色標籤
  * v3.0：底部顯示使用者名稱 + 登出按鈕
@@ -16,14 +17,15 @@ import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
 
 const NAV_ITEMS = [
-  { path: '/',             label: '工作總覽',   icon: '📋' },
-  { path: '/clients',      label: '客戶管理',   icon: '👥' },
-  { path: '/devices',      label: '設備管理',   icon: '📷' },
-  { path: '/maintenance',  label: '維護記錄',   icon: '🔬' },
+  { path: '/',               label: '工作總覽',   icon: '📋' },
+  { path: '/clients',        label: '客戶管理',   icon: '👥' },
+  { path: '/devices',        label: '設備管理',   icon: '📷' },
+  { path: '/maintenance',    label: '維護記錄',   icon: '🔬' },
+  { path: '/repair-orders',  label: '送修單',     icon: '🔧' },
 ]
 
 const ADMIN_NAV_ITEMS = [
-  { path: '/admin/users', label: '使用者管理', icon: '🔧' },
+  { path: '/admin/users', label: '使用者管理', icon: '⚙️' },
 ]
 
 const ROLE_LABEL = {
