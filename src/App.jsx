@@ -1,9 +1,10 @@
 /**
  * App 主入口 — 路由設定
- * 版本: v6.0
- * 日期: 2026-03-25
+ * 版本: v7.0
+ * 日期: 2026-04-07
  * 檔案: src/App.jsx
  *
+ * v7.0：加入 /monitor 路由（IframePage，嵌入 station-check + website-monitor）
  * v6.0：加入 /repair-orders 送修單頁面
  * v5.0：加入 /maintenance 維護記錄頁面
  * v4.0：加入 /admin/users 使用者管理頁面
@@ -23,6 +24,7 @@ import DeviceList from './pages/DeviceList'
 import UserManagement from './pages/UserManagement'
 import MaintenanceList from './pages/MaintenanceList'
 import RepairOrderList from './pages/RepairOrderList'
+import IframePage from './pages/IframePage'
 
 export default function App() {
   return (
@@ -48,6 +50,8 @@ export default function App() {
               <Route path="/maintenance" element={<MaintenanceList />} />
               <Route path="/repair-orders" element={<RepairOrderList />} />
               <Route path="/admin/users" element={<UserManagement />} />
+              {/* 監控中心 — iframe 嵌入 */}
+              <Route path="/monitor" element={<IframePage />} />
               {/* 舊路由重導 */}
               <Route path="/kanban" element={<Navigate to="/" replace />} />
               <Route path="/daily-log" element={<Navigate to="/" replace />} />
