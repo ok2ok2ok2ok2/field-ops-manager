@@ -1,7 +1,7 @@
 /**
  * 設備管理 API — 離線版
- * 版本: v2.0
- * 日期: 2026-03-10
+ * 版本: v2.1
+ * 日期: 2026-04-30
  * 檔案: src/api/devices.js
  *
  * v2.0：改為讀寫 IndexedDB
@@ -34,6 +34,7 @@ export async function createDevice(device) {
   return await create(TABLE, {
     name: device.name,
     device_code: device.device_code || null,
+    sn: device.sn || null,
     model: device.model || null,
     location: device.location || null,
     purchase_date: device.purchase_date || null,

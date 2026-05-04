@@ -1,7 +1,7 @@
 /**
  * 設備管理頁面
- * 版本: v1.7
- * 日期: 2026-03-24
+ * 版本: v2.0
+ * 日期: 2026-04-30
  * 檔案: src/pages/DeviceList.jsx
  *
  * v1.7 變更：
@@ -36,6 +36,7 @@ const STATUS_STYLE = {
 const EMPTY_FORM = {
   name: '',
   device_code: '',
+  sn: '',
   model: '',
   location: '',
   purchase_date: '',
@@ -80,6 +81,7 @@ export default function DeviceList() {
   const DEVICE_COLUMNS = useMemo(() => [
     { header: '設備名稱', key: 'name' },
     { header: '設備編號', key: 'device_code' },
+    { header: 'S/N',      key: 'sn' },
     { header: '型號',     key: 'model' },
     { header: '安裝地點', key: 'location' },
     { header: '狀態',     key: 'status' },
@@ -292,30 +294,38 @@ export default function DeviceList() {
         </select>
       </div>
 
-      <div className="hidden sm:flex items-center gap-4 px-4 py-2 text-xs text-gray-400 font-medium border-b border-gray-100">
-        <span className="w-28">編號</span>
-        <span className="flex-1">名稱</span>
-        <span className="w-24">型號</span>
-        <span className="w-24">客戶</span>
-        <span className="w-24">安裝地點</span>
-        <span className="w-16 text-center">狀態</span>
-        <span className="w-24 text-right">更新時間</span>
-      </div>
-
-      <div className="space-y-1 mt-1">
-        {filtered.length === 0 ? (
-          <p className="text-gray-400 text-sm py-8 text-center">
-            {search || filterStatus ? '沒有符合的設備' : '尚無設備資料'}
-          </p>
-        ) : (
-          filtered.map((device) => (
-            <DeviceRow key={device.id} device={device}
-              clientName={clientMap[device.client_id] || ''}
-              isActive={editingDevice?.id === device.id}
-              onClick={() => setEditingDevice(device)}
-            />
-          ))
-        )}
+      <div className="overflow-x-auto rounded-lg border border-gray-200">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-200">
+              <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 whitespace-nowrap">設備名稱</th>
+              <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 whitespace-nowrap">編號</th>
+              <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 whitespace-nowrap">S/N</th>
+              <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 whitespace-nowrap">型號</th>
+              <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 whitespace-nowrap">所屬客戶</th>
+              <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 whitespace-nowrap">安裝地點</th>
+              <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 whitespace-nowrap">狀態</th>
+              <th className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 whitespace-nowrap">更新時間</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 bg-white">
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="px-4 py-10 text-center text-gray-400 text-sm">
+                  {search || filterStatus ? '沒有符合的設備' : '尚無設備資料'}
+                </td>
+              </tr>
+            ) : (
+              filtered.map((device) => (
+                <DeviceRow key={device.id} device={device}
+                  clientName={clientMap[device.client_id] || ''}
+                  isActive={editingDevice?.id === device.id}
+                  onClick={() => setEditingDevice(device)}
+                />
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
 
       {showModal && (
@@ -346,19 +356,26 @@ function DeviceRow({ device, clientName, isActive, onClick }) {
     : '—'
 
   return (
-    <div onClick={onClick}
-      className={`flex items-center gap-4 px-4 py-3 rounded-lg cursor-pointer transition-all ${
-        isActive ? 'bg-blue-50 border border-blue-200' : 'bg-white border border-gray-100 hover:bg-gray-50 hover:shadow-sm'
+    <tr onClick={onClick}
+      className={`cursor-pointer transition-colors ${
+        isActive ? 'bg-blue-50' : 'hover:bg-gray-50'
       }`}
     >
-      <span className="w-28 text-xs font-mono text-gray-500 truncate">{device.device_code || '—'}</span>
-      <div className="flex-1 min-w-0"><p className="text-sm font-medium text-gray-800 truncate">{device.name}</p></div>
-      <span className="hidden sm:block w-24 text-xs text-gray-400 truncate">{device.model || '—'}</span>
-      <span className="hidden sm:block w-24 text-xs text-gray-500 truncate">{clientName || '—'}</span>
-      <span className="hidden sm:block w-24 text-xs text-gray-400 truncate">{device.location || '—'}</span>
-      <span className={`w-16 text-center text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${statusStyle}`}>{device.status}</span>
-      <span className="hidden sm:block w-24 text-right text-xs text-gray-400">{updatedAt}</span>
-    </div>
+      <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap max-w-[180px]">
+        <span className="block truncate">{device.name}</span>
+      </td>
+      <td className="px-4 py-3 text-xs text-gray-500 font-mono whitespace-nowrap">{device.device_code || <span className="text-gray-300">—</span>}</td>
+      <td className="px-4 py-3 text-xs text-gray-500 font-mono whitespace-nowrap">{device.sn || <span className="text-gray-300">—</span>}</td>
+      <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{device.model || <span className="text-gray-300">—</span>}</td>
+      <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{clientName || <span className="text-gray-300">—</span>}</td>
+      <td className="px-4 py-3 text-xs text-gray-500 max-w-[160px]">
+        <span className="block truncate">{device.location || <span className="text-gray-300">—</span>}</span>
+      </td>
+      <td className="px-4 py-3 whitespace-nowrap">
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusStyle}`}>{device.status}</span>
+      </td>
+      <td className="px-4 py-3 text-xs text-gray-400 text-right whitespace-nowrap">{updatedAt}</td>
+    </tr>
   )
 }
 
@@ -413,6 +430,10 @@ function DeviceEditModal({ device, clients, onClose, onSave, onDelete }) {
             </div>
             <FieldBlock label="設備編號">
               <input type="text" value={form.device_code || ''} onChange={(e) => handleChange('device_code', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </FieldBlock>
+            <FieldBlock label="S/N 序號">
+              <input type="text" value={form.sn || ''} onChange={(e) => handleChange('sn', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </FieldBlock>
             <FieldBlock label="型號">
@@ -530,6 +551,11 @@ function DeviceModal({ clients, onClose, onSave }) {
               >{STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}</select>
             </FormField>
           </div>
+          <FormField label="S/N 序號">
+            <input type="text" value={form.sn} onChange={(e) => handleChange('sn', e.target.value)}
+              placeholder="製造商序號"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </FormField>
           <FormField label="型號">
             <input type="text" value={form.model} onChange={(e) => handleChange('model', e.target.value)}
               placeholder="例：aioto"
