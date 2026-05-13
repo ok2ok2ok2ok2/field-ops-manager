@@ -1,7 +1,7 @@
 /**
  * 維護表列印排版元件
- * 版本: v1.0
- * 日期: 2026-03-23
+ * 版本: v1.1
+ * 日期: 2026-05-13
  * 檔案: src/components/MaintenanceReport.jsx
  *
  * 用途：隱藏渲染，供 html2canvas 擷取後輸出為 PDF / 圖片
@@ -93,9 +93,21 @@ const MaintenanceReport = forwardRef(function MaintenanceReport({ record }, ref)
           </tr>
           <tr>
             <td style={cellLabelStyle}>維護人員</td>
-            <td style={cellValueStyle}>{record.technician || ''}</td>
+            <td style={{ ...cellValueStyle, padding: '4px 10px' }}>
+              {record.technician_img?.url
+                ? <img src={record.technician_img.url} crossOrigin="anonymous"
+                    alt="維護人員簽名"
+                    style={{ height: '44px', maxWidth: '100%', objectFit: 'contain' }} />
+                : <span style={{ color: '#bbb', fontSize: '11px' }}>未簽署</span>}
+            </td>
             <td style={cellLabelStyle}>主管簽核</td>
-            <td style={cellValueStyle}>{record.supervisor || ''}</td>
+            <td style={{ ...cellValueStyle, padding: '4px 10px' }}>
+              {record.supervisor_img?.url
+                ? <img src={record.supervisor_img.url} crossOrigin="anonymous"
+                    alt="主管簽核簽名"
+                    style={{ height: '44px', maxWidth: '100%', objectFit: 'contain' }} />
+                : <span style={{ color: '#bbb', fontSize: '11px' }}>未簽署</span>}
+            </td>
           </tr>
         </tbody>
       </table>

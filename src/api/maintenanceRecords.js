@@ -1,7 +1,7 @@
 /**
  * 維護記錄 API — 地動儀系統現場維護表
- * 版本: v1.1
- * 日期: 2026-03-23
+ * 版本: v1.2
+ * 日期: 2026-05-13
  * 檔案: src/api/maintenanceRecords.js
  *
  * v1.1 變更：
@@ -52,8 +52,8 @@ export async function createRecord(record) {
     .insert({
       station_name: record.station_name || '',
       maintenance_date: record.maintenance_date,
-      technician: record.technician || '',
-      supervisor: record.supervisor || '',
+      technician_img: record.technician_img || null,
+      supervisor_img: record.supervisor_img || null,
       description: record.description || '',
       notes: record.notes || '',
       status_fields: record.status_fields || {},
@@ -74,8 +74,8 @@ export async function updateRecord(id, updates) {
     .update({
       station_name: updates.station_name,
       maintenance_date: updates.maintenance_date,
-      technician: updates.technician,
-      supervisor: updates.supervisor,
+      technician_img: updates.technician_img ?? null,
+      supervisor_img: updates.supervisor_img ?? null,
       description: updates.description,
       notes: updates.notes,
       status_fields: updates.status_fields,
@@ -117,6 +117,31 @@ export async function getStationNames() {
 }
 
 /* ========== 照片上傳 ========== */
+
+/**
+ * 上傳簽名圖片到 Supabase Storage
+ * @param {File} file
+ * @param {string} recordId
+ * @param {'technician'|'supervisor'} role
+ * @returns {{ url: string, name: string }}
+ */
+export async function uploadSignatureImage(file, recordId, role) {
+  const timestamp = Date.now()
+  const ext = file.name.split('.').pop() || 'jpg'
+  const path = `maintenance/${recordId}/sig_${role}_${timestamp}.${ext}`
+
+  const { error } = await supabase.storage
+    .from(BUCKET)
+    .upload(path, file, { contentType: file.type })
+
+  if (error) throw error
+
+  const { data } = supabase.storage
+    .from(BUCKET)
+    .getPublicUrl(path)
+
+  return { url: data.publicUrl, name: file.name }
+}
 
 /**
  * 上傳維護照片到 Supabase Storage

@@ -1,7 +1,7 @@
 /**
  * 維護記錄頁面 — 地動儀系統現場維護表
- * 版本: v1.3
- * 日期: 2026-03-24
+ * 版本: v1.4
+ * 日期: 2026-05-13
  * 檔案: src/pages/MaintenanceList.jsx
  *
  * v1.3 變更：
@@ -18,9 +18,8 @@ import toast from 'react-hot-toast'
 import { format } from 'date-fns'
 import {
   getMaintenanceRecords, createRecord, updateRecord, deleteRecord,
-  uploadMaintenancePhoto, deleteMaintenancePhoto, getStationNames,
+  uploadMaintenancePhoto, deleteMaintenancePhoto, uploadSignatureImage, getStationNames,
 } from '../api/maintenanceRecords'
-import { useAuth } from '../contexts/AuthContext'
 import ImageCropper from '../components/ImageCropper'
 import MaintenanceReport from '../components/MaintenanceReport'
 import { exportMaintenance } from '../utils/exportMaintenance'
@@ -79,7 +78,6 @@ export default function MaintenanceList() {
     const s = search.toLowerCase()
     return (
       (r.station_name || '').toLowerCase().includes(s) ||
-      (r.technician || '').toLowerCase().includes(s) ||
       (r.maintenance_date || '').includes(s)
     )
   })
@@ -134,7 +132,9 @@ export default function MaintenanceList() {
                     <span className="text-sm text-gray-600">{toROCDate(r.maintenance_date)}</span>
                   </td>
                   <td className="px-4 py-3">
-                    <span className="text-sm text-gray-600">{r.technician || '—'}</span>
+                    <span className="text-sm text-gray-600">
+                      {r.technician_img?.url ? '已簽署' : (r.technician || '—')}
+                    </span>
                   </td>
                   <td className="px-4 py-3">
                     <span className={`text-xs px-2 py-0.5 rounded-full ${photoCount > 0 ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
@@ -274,13 +274,12 @@ function ExportDialog({ record, onClose }) {
 
 function MaintenanceModal({ record, onClose }) {
   const isEdit = !!record
-  const { profile } = useAuth()
 
   const [form, setForm] = useState({
     station_name: '',
     maintenance_date: format(new Date(), 'yyyy-MM-dd'),
-    technician: '',
-    supervisor: '',
+    technician_img: null,
+    supervisor_img: null,
     notes: '',
     status_fields: {},
     photos: {},
@@ -300,16 +299,14 @@ function MaintenanceModal({ record, onClose }) {
       setForm({
         station_name: record.station_name || '',
         maintenance_date: record.maintenance_date || format(new Date(), 'yyyy-MM-dd'),
-        technician: record.technician || '',
-        supervisor: record.supervisor || '',
+        technician_img: record.technician_img || null,
+        supervisor_img: record.supervisor_img || null,
         notes: record.notes || '',
         status_fields: record.status_fields || {},
         photos: record.photos || {},
       })
-    } else {
-      setForm((prev) => ({ ...prev, technician: profile?.display_name || '' }))
     }
-  }, [isEdit, record, profile])
+  }, [isEdit, record])
 
   function handleChange(f, v) { setForm((prev) => ({ ...prev, [f]: v })) }
 
@@ -352,6 +349,34 @@ function MaintenanceModal({ record, onClose }) {
   function handleCropCancel() {
     setCropFile(null)
     setCropSlotKey(null)
+  }
+
+  // 上傳簽名圖
+  async function handleSigSelect(role, file) {
+    if (!file) return
+    setUploading(`sig_${role}`)
+    try {
+      const recordId = isEdit ? record.id : 'temp'
+      const result = await uploadSignatureImage(file, recordId, role)
+      setForm((prev) => ({ ...prev, [`${role}_img`]: { url: result.url, name: result.name } }))
+      toast.success('簽名已上傳')
+    } catch (err) {
+      toast.error('上傳失敗：' + err.message)
+    }
+    setUploading(null)
+  }
+
+  // 移除簽名圖
+  async function handleSigRemove(role) {
+    const img = form[`${role}_img`]
+    if (!img?.url) return
+    try {
+      await deleteMaintenancePhoto(img.url)
+      setForm((prev) => ({ ...prev, [`${role}_img`]: null }))
+      toast.success('簽名已移除')
+    } catch (err) {
+      toast.error('移除失敗：' + err.message)
+    }
   }
 
   // 移除照片
@@ -442,14 +467,22 @@ function MaintenanceModal({ record, onClose }) {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">維護人員</label>
-                <input type="text" value={form.technician} onChange={(e) => handleChange('technician', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <label className="block text-sm font-medium text-gray-600 mb-1">維護人員簽名</label>
+                <SignatureSlot
+                  img={form.technician_img}
+                  uploading={uploading === 'sig_technician'}
+                  onSelect={(file) => handleSigSelect('technician', file)}
+                  onRemove={() => handleSigRemove('technician')}
+                />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">主管簽核</label>
-                <input type="text" value={form.supervisor} onChange={(e) => handleChange('supervisor', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <label className="block text-sm font-medium text-gray-600 mb-1">主管簽核簽名</label>
+                <SignatureSlot
+                  img={form.supervisor_img}
+                  uploading={uploading === 'sig_supervisor'}
+                  onSelect={(file) => handleSigSelect('supervisor', file)}
+                  onRemove={() => handleSigRemove('supervisor')}
+                />
               </div>
             </div>
 
@@ -527,6 +560,44 @@ function MaintenanceModal({ record, onClose }) {
           onCancel={handleCropCancel}
         />
       )}
+    </div>
+  )
+}
+
+/* ================================================================
+   照片格子元件
+   ================================================================ */
+
+/* ================================================================
+   簽名格子元件
+   ================================================================ */
+
+function SignatureSlot({ img, uploading, onSelect, onRemove }) {
+  const fileRef = useRef(null)
+  const hasImg = img && img.url
+
+  return (
+    <div
+      className={`relative w-full h-16 rounded-lg border-2 border-dashed flex items-center justify-center overflow-hidden transition-colors ${
+        hasImg ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-gray-50 hover:border-blue-300 hover:bg-blue-50 cursor-pointer'
+      }`}
+      onClick={() => { if (!hasImg && !uploading) fileRef.current?.click() }}
+    >
+      {uploading ? (
+        <span className="text-xs text-blue-500 animate-pulse">上傳中...</span>
+      ) : hasImg ? (
+        <>
+          <img src={img.url} alt="簽名" className="h-full w-full object-contain p-1" />
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemove() }}
+            className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center hover:bg-red-600 transition-colors"
+          >✕</button>
+        </>
+      ) : (
+        <span className="text-xs text-gray-400">點擊上傳簽名圖片</span>
+      )}
+      <input ref={fileRef} type="file" accept="image/*" className="hidden"
+        onChange={(e) => { if (e.target.files?.[0]) onSelect(e.target.files[0]); e.target.value = '' }} />
     </div>
   )
 }
