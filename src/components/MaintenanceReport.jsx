@@ -1,7 +1,7 @@
 /**
  * 維護表列印排版元件
- * 版本: v1.1
- * 日期: 2026-05-13
+ * 版本: v1.2
+ * 日期: 2026-05-18
  * 檔案: src/components/MaintenanceReport.jsx
  *
  * 用途：隱藏渲染，供 html2canvas 擷取後輸出為 PDF / 圖片
@@ -17,16 +17,6 @@
 
 import { forwardRef } from 'react'
 
-/** 狀態欄位定義 */
-const STATUS_FIELDS = [
-  { key: 'environment', label: '環境狀態' },
-  { key: 'instrument', label: '儀器狀態' },
-  { key: 'communication', label: '通訊狀態' },
-  { key: 'router_webserver', label: '路由器 web server' },
-  { key: 'sftp', label: 'SFTP 架構' },
-  { key: 'raspberry_ssh', label: '樹莓派 ssh 安全殼層通訊協定' },
-  { key: 'seedlink', label: 'seedlink 即時地動數據回傳' },
-]
 
 /** 12 格照片定義 */
 const PHOTO_SLOTS = [
@@ -116,7 +106,7 @@ const MaintenanceReport = forwardRef(function MaintenanceReport({ record }, ref)
       <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '16px' }}>
         <thead>
           <tr>
-            <th colSpan={2} style={{
+            <th colSpan={8} style={{
               ...cellLabelStyle,
               textAlign: 'center',
               backgroundColor: '#e8e8e8',
@@ -128,12 +118,26 @@ const MaintenanceReport = forwardRef(function MaintenanceReport({ record }, ref)
           </tr>
         </thead>
         <tbody>
-          {STATUS_FIELDS.map((field) => (
-            <tr key={field.key}>
-              <td style={{ ...cellLabelStyle, width: '40%' }}>{field.label}</td>
-              <td style={cellValueStyle}>{sf[field.key] || ''}</td>
-            </tr>
-          ))}
+          {/* 同列：環境、儀器、路由器、樹莓派 */}
+          <tr>
+            <td style={{ ...cellLabelStyle, width: '12%' }}>環境狀態</td>
+            <td style={{ ...cellValueStyle, width: '13%' }}>{sf.environment || ''}</td>
+            <td style={{ ...cellLabelStyle, width: '12%' }}>儀器狀態</td>
+            <td style={{ ...cellValueStyle, width: '13%' }}>{sf.instrument || ''}</td>
+            <td style={{ ...cellLabelStyle, width: '15%' }}>路由器 web server</td>
+            <td style={{ ...cellValueStyle, width: '10%' }}>{sf.router_webserver || ''}</td>
+            <td style={{ ...cellLabelStyle, width: '15%' }}>樹莓派 ssh 安全殼層通訊協定</td>
+            <td style={{ ...cellValueStyle, width: '10%' }}>{sf.raspberry_ssh || ''}</td>
+          </tr>
+          {/* 其餘：通訊、SFTP、seedlink */}
+          <tr>
+            <td style={cellLabelStyle}>通訊狀態</td>
+            <td style={cellValueStyle}>{sf.communication || ''}</td>
+            <td style={cellLabelStyle}>SFTP 架構</td>
+            <td style={cellValueStyle}>{sf.sftp || ''}</td>
+            <td style={cellLabelStyle}>seedlink 即時地動數據回傳</td>
+            <td style={cellValueStyle} colSpan={3}>{sf.seedlink || ''}</td>
+          </tr>
         </tbody>
       </table>
 

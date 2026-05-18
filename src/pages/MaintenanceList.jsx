@@ -1,7 +1,7 @@
 /**
  * 維護記錄頁面 — 地動儀系統現場維護表
- * 版本: v1.4
- * 日期: 2026-05-13
+ * 版本: v1.5
+ * 日期: 2026-05-18
  * 檔案: src/pages/MaintenanceList.jsx
  *
  * v1.3 變更：
@@ -26,13 +26,18 @@ import { exportMaintenance } from '../utils/exportMaintenance'
 
 /* ========== 常數 ========== */
 
-const STATUS_FIELDS = [
+// 同列 4 欄：環境、儀器、路由器、樹莓派
+const STATUS_ROW1 = [
   { key: 'environment', label: '環境狀態' },
   { key: 'instrument', label: '儀器狀態' },
-  { key: 'communication', label: '通訊狀態' },
   { key: 'router_webserver', label: '路由器 web server' },
+  { key: 'raspberry_ssh', label: '樹莓派 ssh' },
+]
+
+// 其餘欄位：2 欄排列
+const STATUS_ROW2 = [
+  { key: 'communication', label: '通訊狀態' },
   { key: 'sftp', label: 'SFTP 架構' },
-  { key: 'raspberry_ssh', label: '樹莓派 ssh 安全殼層通訊協定' },
   { key: 'seedlink', label: 'seedlink 即時地動數據回傳' },
 ]
 
@@ -489,10 +494,25 @@ function MaintenanceModal({ record, onClose }) {
             {/* ── 狀態欄位 ── */}
             <div>
               <h4 className="text-sm font-bold text-gray-700 mb-3 pb-2 border-b border-gray-100">狀態檢查</h4>
+
+              {/* 同列 4 欄：環境、儀器、路由器、樹莓派 */}
+              <div className="grid grid-cols-4 gap-3 mb-3">
+                {STATUS_ROW1.map((sf) => (
+                  <div key={sf.key}>
+                    <label className="text-xs text-gray-500 block mb-1 truncate" title={sf.label}>{sf.label}</label>
+                    <input type="text" value={form.status_fields[sf.key] || ''}
+                      onChange={(e) => handleStatusChange(sf.key, e.target.value)}
+                      placeholder="正常"
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                ))}
+              </div>
+
+              {/* 其餘 3 欄：通訊、SFTP、seedlink */}
               <div className="grid grid-cols-2 gap-3">
-                {STATUS_FIELDS.map((sf) => (
+                {STATUS_ROW2.map((sf) => (
                   <div key={sf.key} className="flex items-center gap-3">
-                    <label className="text-xs text-gray-500 w-48 flex-shrink-0 text-right">{sf.label}</label>
+                    <label className="text-xs text-gray-500 w-40 flex-shrink-0 text-right">{sf.label}</label>
                     <input type="text" value={form.status_fields[sf.key] || ''}
                       onChange={(e) => handleStatusChange(sf.key, e.target.value)}
                       placeholder="正常"
