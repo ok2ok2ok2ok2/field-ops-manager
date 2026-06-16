@@ -18,6 +18,7 @@ const IFRAME_MAP = {
   'server-slopes':   { url: 'https://station-check.vercel.app/slopes.html',   title: '坡面管理' },
   'server-options':  { url: 'https://station-check.vercel.app/options.html',  title: '選項設定' },
   'server-alerts':   { url: 'https://station-check.vercel.app/alerts.html',   title: '提醒規則' },
+  'server-report':   { url: 'https://station-check.vercel.app/report.html',   title: '客戶報表' },
   'website-monitor': { url: 'https://website-monitor-rho.vercel.app/',        title: '站點警報' },
 }
 

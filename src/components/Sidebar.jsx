@@ -40,6 +40,7 @@ const MONITOR_NAV_ITEMS = [
   { path: '/monitor?page=server-slopes',  label: '坡面管理',   icon: '⛰️' },
   { path: '/monitor?page=server-options', label: '選項設定',   icon: '🔘' },
   { path: '/monitor?page=server-alerts',  label: '提醒規則',   icon: '🔔' },
+  { path: '/monitor?page=server-report',  label: '客戶報表',   icon: '📋' },
 ]
 
 /* ── 獨立項目 ── */
