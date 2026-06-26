@@ -21,11 +21,12 @@ import toast from 'react-hot-toast'
 
 /* ── 外勤管理 ── */
 const FIELD_NAV_ITEMS = [
-  { path: '/',               label: '工作總覽',   icon: '📋' },
-  { path: '/clients',        label: '客戶管理',   icon: '👥' },
-  { path: '/devices',        label: '設備管理',   icon: '📷' },
-  { path: '/maintenance',    label: '維護記錄',   icon: '🔬' },
-  { path: '/repair-orders',  label: '送修單',     icon: '🔧' },
+  { path: '/',                    label: '工作總覽',   icon: '📋' },
+  { path: '/clients',             label: '客戶管理',   icon: '👥' },
+  { path: '/devices',             label: '設備管理',   icon: '📷' },
+  { path: '/maintenance',         label: '定期維護',   icon: '🔬' },
+  { path: '/maintenance-adhoc',   label: '機動維護',   icon: '🛠️' },
+  { path: '/repair-orders',       label: '送修單',     icon: '🔧' },
 ]
 
 const ADMIN_NAV_ITEMS = [

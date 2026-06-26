@@ -298,7 +298,7 @@ const MaintenanceReport = forwardRef(function MaintenanceReport({ record }, ref)
 
 /* ── 表格樣式常數 ── */
 
-const cellLabelStyle = {
+export const cellLabelStyle = {
   border: '1px solid #999',
   padding: '6px 10px',
   backgroundColor: '#f0f0f0',
@@ -307,7 +307,7 @@ const cellLabelStyle = {
   whiteSpace: 'nowrap',
 }
 
-const cellValueStyle = {
+export const cellValueStyle = {
   border: '1px solid #999',
   padding: '6px 10px',
   fontSize: '13px',

@@ -23,6 +23,7 @@ import ClientList from './pages/ClientList'
 import DeviceList from './pages/DeviceList'
 import UserManagement from './pages/UserManagement'
 import MaintenanceList from './pages/MaintenanceList'
+import AdHocMaintenanceList from './pages/AdHocMaintenanceList'
 import RepairOrderList from './pages/RepairOrderList'
 import IframePage from './pages/IframePage'
 
@@ -48,6 +49,7 @@ export default function App() {
               <Route path="/clients" element={<ClientList />} />
               <Route path="/devices" element={<DeviceList />} />
               <Route path="/maintenance" element={<MaintenanceList />} />
+              <Route path="/maintenance-adhoc" element={<AdHocMaintenanceList />} />
               <Route path="/repair-orders" element={<RepairOrderList />} />
               <Route path="/admin/users" element={<UserManagement />} />
               {/* 監控中心 — iframe 嵌入 */}
