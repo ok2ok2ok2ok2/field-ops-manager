@@ -1,10 +1,11 @@
 /**
  * 圖片裁切對話框
- * 版本: v1.0
- * 日期: 2026-03-23
+ * 版本: v1.1
+ * 日期: 2026-06-26
  * 檔案: src/components/ImageCropper.jsx
  *
  * 使用 react-easy-crop，自由比例裁切
+ * v1.1: 允許縮小到 0.5x、改用 contain、補白底，比例不對的圖也能看到整張
  * Props:
  *  - imageFile: File 物件
  *  - onConfirm(croppedFile): 裁切完成，回傳 File
@@ -16,6 +17,7 @@ import Cropper from 'react-easy-crop'
 
 /**
  * 從 canvas 取得裁切後的 Blob
+ * 先填白底，縮小到比例外的區域才不會是透明
  */
 function getCroppedBlob(imageSrc, pixelCrop) {
   return new Promise((resolve, reject) => {
@@ -26,6 +28,8 @@ function getCroppedBlob(imageSrc, pixelCrop) {
       canvas.width = pixelCrop.width
       canvas.height = pixelCrop.height
       const ctx = canvas.getContext('2d')
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
       ctx.drawImage(
         img,
         pixelCrop.x, pixelCrop.y, pixelCrop.width, pixelCrop.height,
@@ -94,6 +98,10 @@ export default function ImageCropper({ imageFile, onConfirm, onCancel }) {
           image={imageSrc}
           crop={crop}
           zoom={zoom}
+          minZoom={0.5}
+          maxZoom={3}
+          objectFit="contain"
+          restrictPosition={false}
           onCropChange={setCrop}
           onZoomChange={setZoom}
           onCropComplete={onCropComplete}
@@ -105,9 +113,10 @@ export default function ImageCropper({ imageFile, onConfirm, onCancel }) {
       <div className="relative bg-gray-900 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-400">縮放</span>
-          <input type="range" min={1} max={3} step={0.1} value={zoom}
+          <input type="range" min={0.5} max={3} step={0.1} value={zoom}
             onChange={(e) => setZoom(Number(e.target.value))}
             className="w-32 accent-blue-500" />
+          <span className="text-xs text-gray-400 w-10">{zoom.toFixed(1)}x</span>
         </div>
         <div className="flex gap-3">
           <button onClick={onCancel}
