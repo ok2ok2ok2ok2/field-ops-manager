@@ -1,31 +1,31 @@
 /**
  * 維護表列印排版元件
- * 版本: v1.3
- * 日期: 2026-05-18
+ * 版本: v1.4
+ * 日期: 2026-06-26
  * 檔案: src/components/MaintenanceReport.jsx
  *
- * 用途：隱藏渲染，供 html2canvas 擷取後輸出為 PDF / 圖片
- * 使用 forwardRef 讓父層取得 DOM ref
+ * v1.4: 地動儀水平、方位改為一格雙直式照 (左:水平 / 右:方位)；舊資料相容
  *
- * 固定結構：
- *  - 標題：地動儀系統現場維護表
- *  - 基本資訊：站名、維護日期（民國）、維護人員、主管簽核
- *  - 7 個狀態欄位
- *  - 12 格照片（3列×4欄）
- *  - 備註
+ * 用途：隱藏渲染，供 html2canvas 擷取後輸出為 PDF / 圖片
  */
 
 import { forwardRef } from 'react'
 
 
-/** 12 格照片定義 */
+/** 照片格定義；multi 格內含兩個直式子格 */
 const PHOTO_SLOTS = [
   { key: 'battery_1', label: '電池電量狀況', row: 1 },
   { key: 'battery_2', label: '電池電量狀況', row: 1 },
   { key: 'waterproof', label: '設備的水密檢修', row: 1 },
   { key: 'solar_panel', label: '太陽能板清潔', row: 1 },
   { key: 'wiring', label: '線路狀況', row: 2 },
-  { key: 'level_direction', label: '地動儀水平、方位', row: 2 },
+  {
+    multi: true, row: 2,
+    subSlots: [
+      { key: 'level_direction_a', label: '地動儀水平' },
+      { key: 'level_direction_b', label: '地動儀方位' },
+    ],
+  },
   { key: 'seismic_signal', label: '三軸地動訊號', row: 2 },
   { key: 'voltage_regulator', label: '降壓器電壓', row: 2 },
   { key: 'env_before_1', label: '環境整理前', row: 3 },
@@ -33,6 +33,17 @@ const PHOTO_SLOTS = [
   { key: 'env_before_2', label: '環境整理前', row: 3 },
   { key: 'env_after_2', label: '環境整理後', row: 3 },
 ]
+
+/** 舊資料相容 (見 MaintenanceList) */
+function migratePhotos(photos) {
+  if (!photos) return {}
+  const out = { ...photos }
+  if (out.level_direction?.url && !out.level_direction_a) {
+    out.level_direction_a = out.level_direction
+    delete out.level_direction
+  }
+  return out
+}
 
 /** 民國年轉換 */
 function toROCDate(dateStr) {
@@ -48,7 +59,7 @@ const MaintenanceReport = forwardRef(function MaintenanceReport({ record }, ref)
   if (!record) return null
 
   const sf = record.status_fields || {}
-  const photos = record.photos || {}
+  const photos = migratePhotos(record.photos)
 
   return (
     <div ref={ref} style={{
@@ -167,7 +178,62 @@ const MaintenanceReport = forwardRef(function MaintenanceReport({ record }, ref)
             const rowSlots = PHOTO_SLOTS.filter((s) => s.row === row)
             return (
               <tr key={row}>
-                {rowSlots.map((slot) => {
+                {rowSlots.map((slot, idx) => {
+                  if (slot.multi) {
+                    return (
+                      <td key={`multi-${row}-${idx}`} style={{
+                        border: '1px solid #999',
+                        padding: '4px',
+                        width: '25%',
+                        textAlign: 'center',
+                        verticalAlign: 'top',
+                      }}>
+                        {/* 兩個小標並排 */}
+                        <div style={{ display: 'flex', marginBottom: '4px' }}>
+                          {slot.subSlots.map((sub) => (
+                            <div key={sub.key} style={{
+                              flex: 1, fontSize: '11px', color: '#666', textAlign: 'center',
+                            }}>
+                              {sub.label}
+                            </div>
+                          ))}
+                        </div>
+                        {/* 兩張直式照緊貼並排，總高度仍為 120px */}
+                        <div style={{ display: 'flex', height: '120px' }}>
+                          {slot.subSlots.map((sub) => {
+                            const photo = photos[sub.key]
+                            return photo?.url ? (
+                              <img
+                                key={sub.key}
+                                src={photo.url}
+                                alt={sub.label}
+                                crossOrigin="anonymous"
+                                style={{
+                                  width: '50%',
+                                  height: '120px',
+                                  objectFit: 'cover',
+                                  borderRadius: '2px',
+                                }}
+                              />
+                            ) : (
+                              <div key={sub.key} style={{
+                                width: '50%',
+                                height: '120px',
+                                backgroundColor: '#f5f5f5',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: '#ccc',
+                                fontSize: '11px',
+                              }}>
+                                無照片
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </td>
+                    )
+                  }
                   const photo = photos[slot.key]
                   return (
                     <td key={slot.key} style={{

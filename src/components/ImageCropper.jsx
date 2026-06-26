@@ -1,13 +1,15 @@
 /**
  * 圖片裁切對話框
- * 版本: v1.1
+ * 版本: v1.2
  * 日期: 2026-06-26
  * 檔案: src/components/ImageCropper.jsx
  *
- * 使用 react-easy-crop，自由比例裁切
+ * 使用 react-easy-crop
  * v1.1: 允許縮小到 0.5x、改用 contain、補白底，比例不對的圖也能看到整張
+ * v1.2: 加入 aspect prop，可指定裁切比例 (預設 4/3)，給直式子格用 2/3
  * Props:
  *  - imageFile: File 物件
+ *  - aspect?: 裁切框長寬比，預設 4/3 (react-easy-crop 預設)
  *  - onConfirm(croppedFile): 裁切完成，回傳 File
  *  - onCancel(): 取消
  */
@@ -45,7 +47,7 @@ function getCroppedBlob(imageSrc, pixelCrop) {
   })
 }
 
-export default function ImageCropper({ imageFile, onConfirm, onCancel }) {
+export default function ImageCropper({ imageFile, aspect = 4 / 3, onConfirm, onCancel }) {
   const [imageSrc, setImageSrc] = useState(null)
   const [crop, setCrop] = useState({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
@@ -98,6 +100,7 @@ export default function ImageCropper({ imageFile, onConfirm, onCancel }) {
           image={imageSrc}
           crop={crop}
           zoom={zoom}
+          aspect={aspect}
           minZoom={0.5}
           maxZoom={3}
           objectFit="contain"

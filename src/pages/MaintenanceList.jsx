@@ -1,14 +1,16 @@
 /**
  * 維護記錄頁面 — 地動儀系統現場維護表
- * 版本: v1.6
- * 日期: 2026-05-18
+ * 版本: v1.7
+ * 日期: 2026-06-26
  * 檔案: src/pages/MaintenanceList.jsx
  *
- * v1.3 變更：
- *  - 支援 URL ?search= 參數，從設備頁面帶入自動篩選
+ * v1.7 變更：
+ *  - 「地動儀水平、方位」改為一格內兩張直式照 (level_direction_a / level_direction_b)
+ *  - 直式子格上傳時，裁切框改為 2:3
+ *  - 舊資料 (photos.level_direction) 自動遷移到 level_direction_a
  *
- * v1.1 變更：
- *  - 移除設備選擇，站名改 datalist 自動補全
+ * v1.3 變更：支援 URL ?search= 參數
+ * v1.1 變更：移除設備選擇，站名改 datalist 自動補全
  */
 
 import { useState, useEffect, useRef } from 'react'
@@ -36,13 +38,23 @@ const STATUS_FIELDS = [
   { key: 'seedlink',       label: 'seedlink 即時地動數據回傳' },
 ]
 
+/**
+ * PHOTO_SLOTS：每格一張 (key/label)；地動儀水平、方位 為雙直式 (multi)
+ * multi 格內含 subSlots，每個 sub 用獨立 key 存在 photos 內
+ */
 const PHOTO_SLOTS = [
   { key: 'battery_1', label: '電池電量狀況', row: 1 },
   { key: 'battery_2', label: '電池電量狀況', row: 1 },
   { key: 'waterproof', label: '設備的水密檢修', row: 1 },
   { key: 'solar_panel', label: '太陽能板清潔', row: 1 },
   { key: 'wiring', label: '線路狀況', row: 2 },
-  { key: 'level_direction', label: '地動儀水平、方位', row: 2 },
+  {
+    multi: true, row: 2,
+    subSlots: [
+      { key: 'level_direction_a', label: '地動儀水平' },
+      { key: 'level_direction_b', label: '地動儀方位' },
+    ],
+  },
   { key: 'seismic_signal', label: '三軸地動訊號', row: 2 },
   { key: 'voltage_regulator', label: '降壓器電壓', row: 2 },
   { key: 'env_before_1', label: '環境整理前', row: 3 },
@@ -50,6 +62,26 @@ const PHOTO_SLOTS = [
   { key: 'env_before_2', label: '環境整理前', row: 3 },
   { key: 'env_after_2', label: '環境整理後', row: 3 },
 ]
+
+/** 實際照片總張數 (multi 格算 2 張) */
+const TOTAL_PHOTO_COUNT = PHOTO_SLOTS.reduce(
+  (sum, s) => sum + (s.multi ? s.subSlots.length : 1),
+  0,
+)
+
+/**
+ * 舊資料相容：把 photos.level_direction (單張) 自動視為 level_direction_a
+ * 不會覆蓋已存在的 level_direction_a
+ */
+function migratePhotos(photos) {
+  if (!photos) return {}
+  const out = { ...photos }
+  if (out.level_direction?.url && !out.level_direction_a) {
+    out.level_direction_a = out.level_direction
+    delete out.level_direction
+  }
+  return out
+}
 
 function toROCDate(dateStr) {
   if (!dateStr) return ''
@@ -122,7 +154,8 @@ export default function MaintenanceList() {
           </thead>
           <tbody>
             {filtered.map((r) => {
-              const photoCount = Object.values(r.photos || {}).filter((p) => p && p.url).length
+              const migratedPhotos = migratePhotos(r.photos)
+              const photoCount = Object.values(migratedPhotos).filter((p) => p && p.url).length
               return (
                 <tr key={r.id} className="border-b border-gray-50 hover:bg-blue-50/30 transition-colors">
                   <td className="px-4 py-3">
@@ -138,7 +171,7 @@ export default function MaintenanceList() {
                   </td>
                   <td className="px-4 py-3">
                     <span className={`text-xs px-2 py-0.5 rounded-full ${photoCount > 0 ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
-                      {photoCount}/12
+                      {photoCount}/{TOTAL_PHOTO_COUNT}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right space-x-3">
@@ -290,6 +323,7 @@ function MaintenanceModal({ record, onClose }) {
   // 裁切相關
   const [cropFile, setCropFile] = useState(null)       // 待裁切的原始檔案
   const [cropSlotKey, setCropSlotKey] = useState(null)  // 哪個格位觸發的
+  const [cropAspect, setCropAspect] = useState(4 / 3)   // 裁切框長寬比
 
   // 站名清單
   const { data: stationNames } = useSWR('station-names', getStationNames)
@@ -303,7 +337,7 @@ function MaintenanceModal({ record, onClose }) {
         supervisor_img: record.supervisor_img || null,
         notes: record.notes || '',
         status_fields: record.status_fields || {},
-        photos: record.photos || {},
+        photos: migratePhotos(record.photos),
       })
     }
   }, [isEdit, record])
@@ -317,11 +351,12 @@ function MaintenanceModal({ record, onClose }) {
     }))
   }
 
-  // 選擇照片 → 先進裁切
+  // 選擇照片 → 先進裁切 (level_direction_a/b 用直式 2:3，其他用 4:3)
   function handlePhotoSelect(slotKey, file) {
     if (!file) return
     setCropSlotKey(slotKey)
     setCropFile(file)
+    setCropAspect(slotKey.startsWith('level_direction_') ? 2 / 3 : 4 / 3)
   }
 
   // 裁切完成 → 上傳
@@ -507,21 +542,32 @@ function MaintenanceModal({ record, onClose }) {
               <h4 className="text-sm font-bold text-gray-700 mb-3 pb-2 border-b border-gray-100">
                 現場照片
                 <span className="text-xs text-gray-400 font-normal ml-2">
-                  （{Object.values(form.photos).filter((p) => p && p.url).length}/12）
+                  （{Object.values(form.photos).filter((p) => p && p.url).length}/{TOTAL_PHOTO_COUNT}）
                 </span>
               </h4>
 
               {[1, 2, 3].map((row) => (
                 <div key={row} className="grid grid-cols-4 gap-3 mb-4">
-                  {PHOTO_SLOTS.filter((s) => s.row === row).map((slot) => (
-                    <PhotoSlot
-                      key={slot.key}
-                      slot={slot}
-                      photo={form.photos[slot.key]}
-                      uploading={uploading === slot.key}
-                      onSelect={(file) => handlePhotoSelect(slot.key, file)}
-                      onRemove={() => handlePhotoRemove(slot.key)}
-                    />
+                  {PHOTO_SLOTS.filter((s) => s.row === row).map((slot, idx) => (
+                    slot.multi ? (
+                      <DualPhotoSlot
+                        key={`multi-${row}-${idx}`}
+                        slot={slot}
+                        photos={form.photos}
+                        uploading={uploading}
+                        onSelect={handlePhotoSelect}
+                        onRemove={handlePhotoRemove}
+                      />
+                    ) : (
+                      <PhotoSlot
+                        key={slot.key}
+                        slot={slot}
+                        photo={form.photos[slot.key]}
+                        uploading={uploading === slot.key}
+                        onSelect={(file) => handlePhotoSelect(slot.key, file)}
+                        onRemove={() => handlePhotoRemove(slot.key)}
+                      />
+                    )
                   ))}
                 </div>
               ))}
@@ -556,6 +602,7 @@ function MaintenanceModal({ record, onClose }) {
       {cropFile && (
         <ImageCropper
           imageFile={cropFile}
+          aspect={cropAspect}
           onConfirm={handleCropConfirm}
           onCancel={handleCropCancel}
         />
@@ -639,6 +686,77 @@ function PhotoSlot({ slot, photo, uploading, onSelect, onRemove }) {
           </div>
         )}
       </div>
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={(e) => { if (e.target.files?.[0]) onSelect(e.target.files[0]); e.target.value = '' }} />
+    </div>
+  )
+}
+
+/* ================================================================
+   雙直式照片格 (地動儀水平 / 方位)
+   外框維持單格 4:3 大小，內部 flex 切兩半，每半為 2:3 直式
+   ================================================================ */
+
+function DualPhotoSlot({ slot, photos, uploading, onSelect, onRemove }) {
+  return (
+    <div className="flex flex-col items-center">
+      {/* 子格各自的小標 */}
+      <div className="grid grid-cols-2 w-full mb-1">
+        {slot.subSlots.map((sub) => (
+          <p key={sub.key} className="text-xs text-gray-500 text-center truncate px-0.5">
+            {sub.label}
+          </p>
+        ))}
+      </div>
+      {/* 共用外框：aspect-[4/3] 與其他格對齊，內含兩個 1/2 寬直式子格 */}
+      <div className="relative w-full aspect-[4/3] rounded-lg border-2 border-dashed border-gray-200 overflow-hidden flex">
+        {slot.subSlots.map((sub, i) => (
+          <DualPhotoHalf
+            key={sub.key}
+            sub={sub}
+            photo={photos[sub.key]}
+            uploading={uploading === sub.key}
+            onSelect={(file) => onSelect(sub.key, file)}
+            onRemove={() => onRemove(sub.key)}
+            separator={i > 0}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function DualPhotoHalf({ sub, photo, uploading, onSelect, onRemove, separator }) {
+  const fileRef = useRef(null)
+  const hasPhoto = photo && photo.url
+  return (
+    <div
+      className={`relative w-1/2 h-full overflow-hidden transition-colors ${
+        separator ? 'border-l border-gray-200' : ''
+      } ${
+        hasPhoto ? 'bg-green-50' : 'bg-gray-50 hover:bg-blue-50 cursor-pointer'
+      }`}
+      onClick={() => { if (!hasPhoto && !uploading) fileRef.current?.click() }}
+    >
+      {uploading ? (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-xs text-blue-500 animate-pulse">上傳中...</span>
+        </div>
+      ) : hasPhoto ? (
+        <>
+          <img src={photo.url} alt={sub.label}
+            className="w-full h-full object-cover" />
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemove() }}
+            className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center hover:bg-red-600 transition-colors"
+          >✕</button>
+        </>
+      ) : (
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-xl text-gray-300">📷</span>
+          <span className="text-[10px] text-gray-400 mt-0.5">點擊上傳</span>
+        </div>
+      )}
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { if (e.target.files?.[0]) onSelect(e.target.files[0]); e.target.value = '' }} />
     </div>
