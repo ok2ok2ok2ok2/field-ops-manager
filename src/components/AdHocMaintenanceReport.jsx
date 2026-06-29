@@ -1,11 +1,10 @@
 /**
  * 機動維護表列印排版元件
- * 版本: v1.0
- * 日期: 2026-06-26
+ * 版本: v1.1
+ * 日期: 2026-06-29
  * 檔案: src/components/AdHocMaintenanceReport.jsx
  *
- * 與 MaintenanceReport 結構相同,差別在照片區改讀 record.photo_slots
- * 並用 CSS Grid 渲染 (可變寬高)
+ * v1.1: 照片區每格加灰色邊線,gap=0,讓 PDF 有清楚格線
  */
 
 import { forwardRef } from 'react'
@@ -123,18 +122,24 @@ const AdHocMaintenanceReport = forwardRef(function AdHocMaintenanceReport({ reco
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: '8px',
+          gap: 0,
           gridAutoFlow: 'dense',
           gridAutoRows: 'min-content',
           border: '1px solid #999',
-          padding: '8px',
+          borderTop: 'none',
           marginBottom: '16px',
         }}
       >
         {slots.map((slot) => {
           const photo = photos[slot.id]
           return (
-            <div key={slot.id} style={{ gridColumn: `span ${slot.cols || 1}` }}>
+            <div key={slot.id} style={{
+              gridColumn: `span ${slot.cols || 1}`,
+              border: '1px solid #999',
+              margin: '-1px 0 0 -1px',  // 邊線重疊,避免雙線
+              padding: '4px',
+              backgroundColor: '#fff',
+            }}>
               <div style={{ fontSize: '11px', color: '#666', marginBottom: '3px', textAlign: 'center' }}>
                 {slot.label}
               </div>
@@ -144,7 +149,6 @@ const AdHocMaintenanceReport = forwardRef(function AdHocMaintenanceReport({ reco
                     width: '100%',
                     height: `${slot.height || 180}px`,
                     objectFit: 'cover',
-                    borderRadius: '2px',
                     display: 'block',
                   }} />
               ) : (
