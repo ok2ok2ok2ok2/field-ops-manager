@@ -26,6 +26,7 @@ import MaintenanceList from './pages/MaintenanceList'
 import AdHocMaintenanceList from './pages/AdHocMaintenanceList'
 import RepairOrderList from './pages/RepairOrderList'
 import IframePage from './pages/IframePage'
+import MonthlyReport from './pages/MonthlyReport'
 
 export default function App() {
   return (
@@ -54,6 +55,8 @@ export default function App() {
               <Route path="/admin/users" element={<UserManagement />} />
               {/* 監控中心 — iframe 嵌入 */}
               <Route path="/monitor" element={<IframePage />} />
+              {/* 月報表匯出 (公差單/加班表) */}
+              <Route path="/monthly-report" element={<MonthlyReport />} />
               {/* 舊路由重導 */}
               <Route path="/kanban" element={<Navigate to="/" replace />} />
               <Route path="/daily-log" element={<Navigate to="/" replace />} />
