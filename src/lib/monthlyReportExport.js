@@ -1,15 +1,16 @@
 /**
- * 月報表匯出 — 讀範本 xlsx, 填入資料, 產下載
- * 版本: v0.1.0
+ * 月報表匯出 — 用 ExcelJS 讀範本 xlsx, 填資料, 觸發下載
+ * 版本: v0.2.0
  * 日期: 2026-07-09
  * 檔案: src/lib/monthlyReportExport.js
  *
+ * v0.2.0: 改用 ExcelJS (SheetJS Community 版寫回會展開 XFD 欄, styles 大量流失)
+ *
  * 範本: public/templates/business_trip.xlsx  &  overtime.xlsx
- * 只修改資料格 (row 6-16 / row 7-15) 的 .v, 保留範本原有 style / merge / 公式
+ * 只改資料格 .value, 保留 style / merge / 公式 (Z17 SUM / Y18=B3)
  */
 
-import * as XLSX from 'xlsx'
-
+// ExcelJS 在函數內 dynamic import, 避免進主 bundle
 const TEMPLATE_TRIP = '/templates/business_trip.xlsx'
 const TEMPLATE_OT   = '/templates/overtime.xlsx'
 
@@ -31,20 +32,16 @@ const OT_COL_MAP = {
 async function loadTemplate(url) {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`載入範本失敗 ${url}: HTTP ${res.status}`)
-  const ab = await res.arrayBuffer()
-  return XLSX.read(ab, { type: 'array', cellStyles: true })
+  const buf = await res.arrayBuffer()
+  const ExcelJS = (await import('exceljs')).default
+  const wb = new ExcelJS.Workbook()
+  await wb.xlsx.load(buf)
+  return wb
 }
 
 function setCell(ws, addr, value) {
   if (value === '' || value == null) return
-  const t = typeof value === 'number' ? 'n' : 's'
-  if (ws[addr]) {
-    ws[addr].v = value
-    ws[addr].t = t
-    delete ws[addr].w
-  } else {
-    ws[addr] = { v: value, t }
-  }
+  ws.getCell(addr).value = value
 }
 
 function parseHhmm(s) {
@@ -62,10 +59,23 @@ function ymd(dateStr) {
   return [y, m, d]
 }
 
+async function downloadWorkbook(wb, filename) {
+  const buf = await wb.xlsx.writeBuffer()
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 /* ========== 公差單 ========== */
 export async function exportBusinessTrip(applicant, trips) {
   const wb = await loadTemplate(TEMPLATE_TRIP)
-  const ws = wb.Sheets[wb.SheetNames[0]]
+  const ws = wb.worksheets[0]
 
   if (applicant) setCell(ws, 'B3', applicant)
 
@@ -83,8 +93,8 @@ export async function exportBusinessTrip(applicant, trips) {
     setCell(ws, `E${r}`, sd)
     setCell(ws, `G${r}`, sh)
     setCell(ws, `I${r}`, smm)
-    setCell(ws, `L${r}`, sm)  // 終月 (同日)
-    setCell(ws, `N${r}`, sd)  // 終日
+    setCell(ws, `L${r}`, sm)
+    setCell(ws, `N${r}`, sd)
     setCell(ws, `P${r}`, eh)
     setCell(ws, `R${r}`, emm)
     setCell(ws, `T${r}`, 0)
@@ -93,16 +103,16 @@ export async function exportBusinessTrip(applicant, trips) {
     setCell(ws, `Z${r}`, Number(t.meal_fee) || 0)
   }
 
-  const ym = trips[0]?.log_date?.substring(0, 7).replace('-', '') || 'YYYYMM'
+  const y = trips[0]?.log_date?.slice(0, 4) || ''
+  const m = Number(trips[0]?.log_date?.slice(5, 7)) || ''
   const name = applicant || '申請人'
-  const filename = `${trips[0]?.log_date?.slice(0, 4) || ''} ${name}${Number(ym.slice(4)) || ''}月公差單.xlsx`
-  XLSX.writeFile(wb, filename.trim())
+  await downloadWorkbook(wb, `${y} ${name}${m}月公差單.xlsx`.trim())
 }
 
 /* ========== 加班表 ========== */
 export async function exportOvertime(applicant, overtimes) {
   const wb = await loadTemplate(TEMPLATE_OT)
-  const ws = wb.Sheets[wb.SheetNames[0]]
+  const ws = wb.worksheets[0]
 
   if (applicant) setCell(ws, 'B3', applicant)
 
@@ -132,8 +142,8 @@ export async function exportOvertime(applicant, overtimes) {
     }
   }
 
-  const ym = overtimes[0]?.log_date?.substring(0, 7).replace('-', '') || 'YYYYMM'
+  const y = overtimes[0]?.log_date?.slice(0, 4) || ''
+  const m = Number(overtimes[0]?.log_date?.slice(5, 7)) || ''
   const name = applicant || '申請人'
-  const filename = `${overtimes[0]?.log_date?.slice(0, 4) || ''} ${name}${Number(ym.slice(4)) || ''}月加班表.xlsx`
-  XLSX.writeFile(wb, filename.trim())
+  await downloadWorkbook(wb, `${y} ${name}${m}月加班表.xlsx`.trim())
 }
