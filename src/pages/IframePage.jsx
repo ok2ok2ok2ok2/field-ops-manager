@@ -19,6 +19,7 @@ const IFRAME_MAP = {
   'server-options':  { url: 'https://station-check.vercel.app/options.html',  title: '選項設定' },
   'server-alerts':   { url: 'https://station-check.vercel.app/alerts.html',   title: '提醒規則' },
   'server-report':   { url: 'https://station-check.vercel.app/report.html',   title: '客戶報表' },
+  'customers':       { url: 'https://station-check.vercel.app/customers.html', title: '客戶推播設定' },
   'website-monitor': { url: 'https://website-monitor-rho.vercel.app/',        title: '站點警報' },
 }
 

@@ -43,6 +43,7 @@ const MONITOR_NAV_ITEMS = [
   { path: '/monitor?page=server-options', label: '選項設定',   icon: '🔘' },
   { path: '/monitor?page=server-alerts',  label: '提醒規則',   icon: '🔔' },
   { path: '/monitor?page=server-report',  label: '客戶報表',   icon: '📋' },
+  { path: '/monitor?page=customers',      label: '客戶推播設定', icon: '📣' },
 ]
 
 /* ── 獨立項目 ── */
