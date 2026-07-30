@@ -54,6 +54,12 @@ const WORK_TYPE_BTN = {
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 
+// 只有「真的能 hover」的裝置（桌機滑鼠）才啟用 hover 展開/浮動提示框。
+// 手機/平板觸控沒有 mouseleave，hover 提示框會卡住不收 → 點一下只開日誌 Modal。
+const CAN_HOVER = typeof window !== 'undefined' && window.matchMedia
+  ? window.matchMedia('(hover: hover)').matches
+  : true
+
 function needsFieldInfo(wt) { return wt === '外勤' || wt === '內勤+外勤' }
 
 function calcFieldHours(s, e) {
@@ -266,8 +272,8 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick, teamMode, user
         return (
           <div key={dateStr}
             className="relative border-b border-gray-50 last:border-b-0"
-            onMouseEnter={() => setHoveredIdx(idx)}
-            onMouseLeave={() => { setHoveredIdx(null); setHoveredLogId(null) }}
+            onMouseEnter={CAN_HOVER ? () => setHoveredIdx(idx) : undefined}
+            onMouseLeave={CAN_HOVER ? () => { setHoveredIdx(null); setHoveredLogId(null) } : undefined}
           >
             <div
               onClick={() => onDateClick(d)}
@@ -305,8 +311,8 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick, teamMode, user
                   <div className="flex gap-3 flex-wrap">
                     {dayLogs.map((log) => (
                       <div key={log.id} className="flex-1 min-w-0"
-                        onMouseEnter={(e) => { e.stopPropagation(); setHoveredLogId(log.id) }}
-                        onMouseLeave={(e) => { e.stopPropagation(); setHoveredLogId(null) }}
+                        onMouseEnter={CAN_HOVER ? (e) => { e.stopPropagation(); setHoveredLogId(log.id) } : undefined}
+                        onMouseLeave={CAN_HOVER ? (e) => { e.stopPropagation(); setHoveredLogId(null) } : undefined}
                       >
                         <WeekDayLogBlock log={log} items={workItemsMap[log.id] || []}
                           isHovered={isHovered} teamMode={teamMode} userNameMap={userNameMap}
@@ -457,8 +463,8 @@ function MonthView({ currentMonth, logMap, workItemsMap, onDateClick, teamMode, 
             <div key={dateStr}
               className={`relative min-h-24 p-2 border-b border-r border-gray-50 cursor-pointer transition-colors ${inMonth ? 'hover:bg-blue-50' : 'bg-gray-50/50'}`}
               onClick={() => onDateClick(d)}
-              onMouseEnter={() => setHoveredDateStr(dateStr)}
-              onMouseLeave={() => setHoveredDateStr(null)}
+              onMouseEnter={CAN_HOVER ? () => setHoveredDateStr(dateStr) : undefined}
+              onMouseLeave={CAN_HOVER ? () => setHoveredDateStr(null) : undefined}
             >
               <span className={`text-sm font-medium w-7 h-7 flex items-center justify-center rounded-full ${
                 today ? 'bg-blue-600 text-white' : !inMonth ? 'text-gray-300' : isWeekend ? 'text-red-400' : 'text-gray-700'
