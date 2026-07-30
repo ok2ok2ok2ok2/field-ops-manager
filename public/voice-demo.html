@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>語音工作紀錄 Demo</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f4f6fb; --surface: #ffffff; --surface-2: #eef2f9;
+    --ink: #1a2233; --ink-soft: #55617a; --ink-faint: #97a1b7;
+    --line: #dbe2ef; --accent: #2563eb; --accent-soft: #dbe7ff;
+    --rec: #e11d48; --rec-soft: #ffe1e8; --ok: #0f9d6b;
+    --radius: 16px;
+    --shadow: 0 1px 2px rgba(20,30,60,.06), 0 8px 24px rgba(20,30,60,.08);
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft JhengHei", "PingFang TC", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1320; --surface: #161d2e; --surface-2: #1e2740;
+      --ink: #eaeff9; --ink-soft: #9fb0d0; --ink-faint: #6a7897;
+      --line: #2a3450; --accent: #6a9bff; --accent-soft: #1c2c4d;
+      --rec: #ff5c7a; --rec-soft: #3a1220; --ok: #34d399;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  .wrap { font-family: var(--sans); background: var(--bg); color: var(--ink); min-height: 100vh; padding: 18px 16px 40px; max-width: 560px; margin: 0 auto; -webkit-text-size-adjust: 100%; }
+  header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  .title { font-size: 1.35rem; font-weight: 800; letter-spacing: -.02em; line-height: 1.2; }
+  .subtitle { color: var(--ink-soft); font-size: .85rem; margin-top: 4px; }
+  .chip { font-size: .72rem; font-weight: 600; padding: 5px 10px; border-radius: 999px; white-space: nowrap; border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft); }
+  .chip.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); background: color-mix(in srgb, var(--ok) 12%, var(--surface)); }
+  .chip.bad { color: var(--rec); border-color: color-mix(in srgb, var(--rec) 40%, var(--line)); background: var(--rec-soft); }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; margin-bottom: 16px; }
+  .label { font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 8px; }
+  .interim { min-height: 22px; font-size: .95rem; color: var(--accent); font-style: italic; margin-bottom: 10px; word-break: break-word; }
+  .interim:empty::before { content: "（開始說話，這裡即時顯示辨識中的字）"; color: var(--ink-faint); font-style: normal; }
+  textarea { width: 100%; min-height: 180px; resize: vertical; font-family: var(--sans); font-size: 1.05rem; line-height: 1.6; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .meta { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; gap: 10px; }
+  .count { font-size: .78rem; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+  .row { display: flex; gap: 8px; }
+  .btn { font-family: var(--sans); font-size: .85rem; font-weight: 600; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .btn:active { transform: translateY(1px); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .controls { display: flex; align-items: center; gap: 14px; }
+  .mic { flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px; font-family: var(--sans); font-size: 1.05rem; font-weight: 700; padding: 16px; border-radius: 14px; border: none; cursor: pointer; background: var(--accent); color: #fff; -webkit-tap-highlight-color: transparent; transition: background .15s ease; }
+  .mic .dot { width: 12px; height: 12px; border-radius: 999px; background: #fff; }
+  .mic.rec { background: var(--rec); }
+  .mic.rec .dot { animation: pulse 1s ease-in-out infinite; }
+  .mic:disabled { background: var(--ink-faint); cursor: not-allowed; }
+  .mic:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
+  @keyframes pulse { 0%,100% { opacity: 1; transform: scale(1);} 50% { opacity: .35; transform: scale(1.6);} }
+  @media (prefers-reduced-motion: reduce) { .mic.rec .dot { animation: none; } }
+  select { font-family: var(--sans); font-size: .82rem; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+  .hint { font-size: .82rem; color: var(--ink-soft); line-height: 1.6; }
+  .hint b { color: var(--ink); }
+  .hint ul { margin: 8px 0 0; padding-left: 18px; }
+  .hint li { margin-bottom: 4px; }
+  .foot { font-size: .74rem; color: var(--ink-faint); line-height: 1.6; margin-top: 6px; }
+  .err { color: var(--rec); font-size: .82rem; margin-top: 10px; min-height: 1em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="title">🎙️ 語音工作紀錄</div>
+      <div class="subtitle">測試中文語音轉文字 — 值不值得放進 field-ops</div>
+    </div>
+    <span id="support" class="chip">檢查中…</span>
+  </header>
+
+  <div class="card">
+    <div class="label">工作紀錄（模擬欄位・可直接編輯修正）</div>
+    <div id="interim" class="interim"></div>
+    <textarea id="text" placeholder="按下方麥克風開始講話，辨識到的字會填進這裡。可以手動修改。"></textarea>
+    <div class="meta">
+      <span class="count"><span id="count">0</span> 字</span>
+      <div class="row">
+        <button id="copy" class="btn" type="button">複製</button>
+        <button id="clear" class="btn" type="button">清空</button>
+      </div>
+    </div>
+    <div id="err" class="err"></div>
+  </div>
+
+  <div class="card">
+    <div class="controls">
+      <button id="mic" class="mic" type="button">
+        <span class="dot"></span><span id="micLabel">開始語音輸入</span>
+      </button>
+      <select id="lang" aria-label="辨識語言">
+        <option value="zh-TW" selected>國語 (zh-TW)</option>
+        <option value="cmn-Hant-TW">國語・繁 (cmn-Hant-TW)</option>
+        <option value="zh-HK">粵語 (zh-HK)</option>
+        <option value="en-US">English</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">怎麼評估好不好用</div>
+    <div class="hint">
+      拿實際工地會講的話測，重點看：
+      <ul>
+        <li><b>專有名詞</b>：站點代號、設備型號（例：「LSB1 基站」「71:8089」）</li>
+        <li><b>數字 / 單位</b>：「電池電壓 12.6 伏」「線纜三條」</li>
+        <li><b>連續長句</b>：講一整段會不會斷、標點對不對</li>
+        <li><b>吵雜環境</b>：工地背景音下的準確度</li>
+      </ul>
+      <div class="foot" id="foot"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    var $ = function (id) { return document.getElementById(id); };
+    var support = $('support'), micBtn = $('mic'), micLabel = $('micLabel');
+    var textEl = $('text'), interimEl = $('interim'), errEl = $('err');
+    var countEl = $('count'), langSel = $('lang'), foot = $('foot');
+
+    var ua = navigator.userAgent;
+    var isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    foot.textContent = 'Android Chrome 支援最好；iOS 需 Safari 16+ 且較不穩；桌機 Chrome/Edge 可用。此為瀏覽器內建辨識（Web Speech API），未串任何付費服務。';
+
+    function updateCount() { countEl.textContent = (textEl.value || '').length; }
+    textEl.addEventListener('input', updateCount);
+    $('clear').addEventListener('click', function () { textEl.value = ''; interimEl.textContent = ''; updateCount(); textEl.focus(); });
+    $('copy').addEventListener('click', function () {
+      textEl.select();
+      navigator.clipboard && navigator.clipboard.writeText(textEl.value).then(
+        function () { $('copy').textContent = '已複製'; setTimeout(function(){ $('copy').textContent = '複製'; }, 1200); },
+        function () {}
+      );
+    });
+
+    if (!SR) {
+      support.textContent = '此瀏覽器不支援'; support.className = 'chip bad';
+      micBtn.disabled = true; micLabel.textContent = '不支援語音辨識';
+      errEl.textContent = isIOS ? '你的裝置/瀏覽器沒有 Web Speech API。iOS 請用內建 Safari（16 以上）再試一次。' : '此瀏覽器不支援語音辨識，建議用 Chrome 或 Edge。';
+      return;
+    }
+    support.textContent = '可用 · Web Speech API'; support.className = 'chip ok';
+
+    var rec = null, recording = false, finalText = '';
+
+    function start() {
+      finalText = textEl.value ? (textEl.value.replace(/\s+$/, '') + ' ') : '';
+      rec = new SR();
+      rec.lang = langSel.value; rec.continuous = true; rec.interimResults = true;
+      rec.onresult = function (e) {
+        var interim = '';
+        for (var i = e.resultIndex; i < e.results.length; i++) {
+          var r = e.results[i];
+          if (r.isFinal) { finalText += r[0].transcript; } else { interim += r[0].transcript; }
+        }
+        textEl.value = finalText + interim; interimEl.textContent = interim; updateCount();
+      };
+      rec.onerror = function (e) {
+        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+          errEl.textContent = '麥克風被拒絕。請允許此網站的麥克風權限（網址列旁的鎖頭圖示）後重試。';
+        } else if (e.error === 'no-speech') { errEl.textContent = '沒聽到聲音，再靠近麥克風講一次。'; }
+        else if (e.error === 'network') { errEl.textContent = '辨識服務連線問題（需要網路）。'; }
+        else { errEl.textContent = '辨識錯誤：' + e.error; }
+      };
+      rec.onend = function () {
+        if (recording) { try { rec.start(); } catch (err) { stop(); } } else { setRecUI(false); }
+      };
+      try { rec.start(); recording = true; errEl.textContent = ''; setRecUI(true); }
+      catch (err) { errEl.textContent = '無法啟動：' + err.message; }
+    }
+    function stop() { recording = false; if (rec) { try { rec.stop(); } catch (e) {} } interimEl.textContent = ''; setRecUI(false); }
+    function setRecUI(on) { micBtn.classList.toggle('rec', on); micLabel.textContent = on ? '錄音中…點此停止' : '開始語音輸入'; }
+
+    micBtn.addEventListener('click', function () { recording ? stop() : start(); });
+    langSel.addEventListener('change', function () { if (recording) { stop(); setTimeout(start, 200); } });
+    updateCount();
+  })();
+</script>
+</body>
+</html>
