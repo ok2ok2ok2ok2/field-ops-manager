@@ -1,9 +1,11 @@
 /**
  * 主佈局元件
- * 版本: v3.0
- * 日期: 2026-03-27
+ * 版本: v3.2
+ * 日期: 2026-08-24
  * 檔案: src/components/Layout.jsx
  *
+ * v3.2：離開手機寬度時關掉抽屜；手機頂欄標題補 /monitor fallback
+ * v3.1：手機版面 — 頂欄漢堡鈕 + 側邊欄抽屜（桌機行為不變）
  * v3.0：整合 WorkProvider，全域顯示 ProjectBar + PendingPanel + 相關 Modal
  *       ProjectBar / PendingPanel / ProjectCard / VisibilityModal / ProjectModal / WorkItemModal
  *       全部從 WorkDashboard 搬到此處
@@ -12,7 +14,7 @@
  */
 
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Outlet, useLocation } from 'react-router-dom'
 import useSWR from 'swr'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -29,6 +31,8 @@ import {
 } from '../api/workItems'
 import { getLogByDate, createLog } from '../api/dailyLogs'
 import { useAuth } from '../contexts/AuthContext'
+import useIsMobile from '../hooks/useIsMobile'
+import { ALL_NAV_ITEMS } from '../lib/navItems'
 
 /* ================================================================
    外層：用 WorkProvider 包住內層
@@ -48,11 +52,32 @@ export default function Layout() {
 
 function LayoutInner() {
   const work = useWork()
+  const isMobile = useIsMobile()
+  const location = useLocation()
+  const [drawerOpen, setDrawerOpen] = useState(false)
+
+  // 換頁 / 瀏覽器上一頁都要把抽屜關掉
+  const routeKey = location.pathname + location.search
+  const [lastRoute, setLastRoute] = useState(routeKey)
+  if (lastRoute !== routeKey) {
+    setLastRoute(routeKey)
+    setDrawerOpen(false)
+  }
+
+  // 拉寬到桌機時抽屜狀態要歸零，不然縮回手機會自己彈開
+  const [lastIsMobile, setLastIsMobile] = useState(isMobile)
+  if (lastIsMobile !== isMobile) {
+    setLastIsMobile(isMobile)
+    setDrawerOpen(false)
+  }
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ backgroundColor: '#f0f2f5' }}>
-      <Sidebar />
+      <Sidebar mobileOpen={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <div className="flex-1 flex flex-col overflow-hidden">
+        {/* 手機頂欄 */}
+        {isMobile && <MobileTopBar onMenu={() => setDrawerOpen(true)} />}
+
         {/* 上方：案件方塊列 */}
         <ProjectBar />
 
@@ -76,6 +101,35 @@ function LayoutInner() {
       )}
       {work.showVisibilityModal && <VisibilityModal />}
       {work.wiModalItem !== undefined && <WorkItemModal />}
+    </div>
+  )
+}
+
+/* ================================================================
+   MobileTopBar — 手機頂欄（漢堡鈕 + 目前頁面標題）
+   ================================================================ */
+
+function MobileTopBar({ onMenu }) {
+  const location = useLocation()
+  const full = location.pathname + location.search
+  const current =
+    ALL_NAV_ITEMS.find((it) => it.path === full) ||
+    ALL_NAV_ITEMS.find((it) => !it.path.includes('?') && it.path === location.pathname)
+
+  return (
+    <div className="flex items-center gap-2 px-2 h-12 bg-white border-b border-gray-200 flex-shrink-0">
+      <button
+        onClick={onMenu}
+        className="w-10 h-10 flex items-center justify-center rounded-lg text-xl text-gray-600 hover:bg-gray-100 transition-colors"
+        title="開啟選單"
+      >
+        ☰
+      </button>
+      <span className="text-sm font-medium text-gray-700 truncate">
+        {current
+          ? `${current.icon} ${current.label}`
+          : location.pathname.startsWith('/monitor') ? '📡 監控中心' : '工作管理系統'}
+      </span>
     </div>
   )
 }

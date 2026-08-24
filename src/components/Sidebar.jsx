@@ -1,9 +1,11 @@
 /**
  * 收縮式側邊導航欄
- * 版本: v7.3
- * 日期: 2026-07-13
+ * 版本: v7.5
+ * 日期: 2026-08-24
  * 檔案: src/components/Sidebar.jsx
  *
+ * v7.5：hover 改用 pointerType 判斷（觸控筆電也不會卡開）；logo 一律可點擊固定展開
+ * v7.4：手機改抽屜 (drawer)，無 hover 裝置改點擊展開 — 修「碰一下就卡開收不回去」
  * v7.3：常用功能群組 (釘選+7天點擊 top-N) / 兩群組預設收起 + localStorage persist / 加 /monthly-report
  * v7.2：隱藏導航區滾動條（保留滾動功能）
  * v7.1：站點警報移為獨立項目（與外勤管理/監控中心同層級）
@@ -14,42 +16,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
+import useIsMobile from '../hooks/useIsMobile'
+import {
+  FIELD_NAV_ITEMS, ADMIN_NAV_ITEMS, MONITOR_NAV_ITEMS, STANDALONE_NAV_ITEMS,
+} from '../lib/navItems'
 import {
   getPrefs, setCollapsed, recordClick, togglePin, isPinned,
   getFavorites, clearClickHistory, savePrefs, CONSTANTS,
 } from '../lib/sidebarPrefs'
-
-/* ── 外勤管理 ── */
-const FIELD_NAV_ITEMS = [
-  { path: '/',                    label: '工作總覽',   icon: '📋' },
-  { path: '/clients',             label: '客戶管理',   icon: '👥' },
-  { path: '/devices',             label: '設備管理',   icon: '📷' },
-  { path: '/maintenance',         label: '定期維護',   icon: '🔬' },
-  { path: '/maintenance-adhoc',   label: '機動維護',   icon: '🛠️' },
-  { path: '/repair-orders',       label: '送修單',     icon: '🔧' },
-  { path: '/monthly-report',      label: '月報表',     icon: '📤' },
-]
-
-const ADMIN_NAV_ITEMS = [
-  { path: '/admin/users', label: '使用者管理', icon: '⚙️' },
-]
-
-/* ── 監控中心 ── */
-const MONITOR_NAV_ITEMS = [
-  { path: '/monitor?page=server-daily',   label: '每日填寫',   icon: '📝' },
-  { path: '/monitor?page=server-stats',   label: '統計報表',   icon: '📊' },
-  { path: '/monitor?page=server-servers', label: '伺服器管理', icon: '🖥️' },
-  { path: '/monitor?page=server-slopes',  label: '坡面管理',   icon: '⛰️' },
-  { path: '/monitor?page=server-options', label: '選項設定',   icon: '🔘' },
-  { path: '/monitor?page=server-alerts',  label: '提醒規則',   icon: '🔔' },
-  { path: '/monitor?page=server-report',  label: '客戶報表',   icon: '📋' },
-  { path: '/monitor?page=customers',      label: '客戶推播設定', icon: '📣' },
-]
-
-/* ── 獨立項目 ── */
-const STANDALONE_NAV_ITEMS = [
-  { path: '/monitor?page=website-monitor', label: '站點警報', icon: '🚨' },
-]
 
 const ROLE_LABEL = {
   admin: '管理員',
@@ -187,8 +161,17 @@ function SettingsModal({ open, onClose, maxFavs, onChangeMax, onClearHistory, pi
 }
 
 /* ── 主元件 ── */
-export default function Sidebar() {
-  const [hovered, setHovered] = useState(false)
+export default function Sidebar({ mobileOpen = false, onClose }) {
+  const isMobile = useIsMobile()
+  const [hoverState, setHoverState] = useState(false)
+  const [clickOpen, setClickOpen] = useState(false)
+  // 手機抽屜一律展開顯示文字；桌機 = 滑鼠 hover，或點 logo 固定展開
+  const hovered = isMobile ? true : (hoverState || clickOpen)
+
+  // 只認真正的滑鼠。觸控會送出模擬的 pointerenter 但永遠不送 pointerleave，
+  // 綁上去就會卡在展開（觸控筆電在桌機寬度下也一樣中招）
+  function handlePointerEnter(e) { if (e.pointerType === 'mouse') setHoverState(true) }
+  function handlePointerLeave(e) { if (e.pointerType === 'mouse') setHoverState(false) }
   const initialPrefs = useMemo(() => getPrefs(), [])
   const [fieldExpanded, setFieldExpanded] = useState(!initialPrefs.collapsed.field)
   const [monitorExpanded, setMonitorExpanded] = useState(!initialPrefs.collapsed.monitor)
@@ -217,12 +200,19 @@ export default function Sidebar() {
     setCollapsed('monitor', !next)
   }
 
+  // 手機：點到導航連結就關抽屜（釘選鈕有 stopPropagation，不會誤關）
+  function handleNavAreaClick(e) {
+    if (!isMobile) return
+    if (e.target.closest('a')) onClose?.()
+  }
+
   function handleTogglePin(path) {
     togglePin(path)
     setPrefsVer((v) => v + 1)
   }
 
   function handleChangeMax(n) {
+    if (!Number.isFinite(n)) return
     savePrefs({ maxFavs: Math.max(CONSTANTS.MIN_FAVS, Math.min(CONSTANTS.MAX_FAVS, n)) })
     setPrefsVer((v) => v + 1)
   }
@@ -252,22 +242,36 @@ export default function Sidebar() {
       {/* 隱藏 sidebar nav 滾動條 */}
       <style>{`.sidebar-nav::-webkit-scrollbar { display: none; }`}</style>
 
-      {/* 佔位元素 */}
-      <div className="w-16 flex-shrink-0" />
+      {/* 佔位元素 — 手機走抽屜，不佔版面 */}
+      {!isMobile && <div className="w-16 flex-shrink-0" />}
+
+      {/* 手機抽屜遮罩 */}
+      {isMobile && mobileOpen && (
+        <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
+      )}
 
       {/* 實際 sidebar */}
       <aside
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        className="fixed top-0 left-0 h-screen flex flex-col z-40 transition-all duration-200 ease-in-out"
+        onPointerEnter={isMobile ? undefined : handlePointerEnter}
+        onPointerLeave={isMobile ? undefined : handlePointerLeave}
+        className="fixed top-0 left-0 h-screen flex flex-col transition-all duration-200 ease-in-out"
         style={{
-          width: hovered ? 240 : 64,
+          width: isMobile ? 260 : (hovered ? 240 : 64),
+          transform: isMobile && !mobileOpen ? 'translateX(-100%)' : 'translateX(0)',
+          zIndex: isMobile ? 50 : 40,
           backgroundColor: '#1a1a2e',
         }}
       >
-        {/* Logo */}
+        {/* Logo — 手機顯示關閉鈕；無 hover 裝置改點擊展開/收合 */}
         <div className="px-4 py-5 border-b border-white/10 flex items-center gap-3 overflow-hidden">
-          <span className="text-xl flex-shrink-0">⚙️</span>
+          <button
+            onClick={isMobile ? onClose : () => setClickOpen((v) => !v)}
+            className="text-xl flex-shrink-0 text-white"
+            style={{ cursor: 'pointer' }}
+            title={isMobile ? '關閉選單' : (clickOpen ? '取消固定展開' : '固定展開選單')}
+          >
+            {isMobile ? '✕' : '⚙️'}
+          </button>
           <span
             className="text-white text-sm font-bold whitespace-nowrap transition-opacity duration-200"
             style={{ opacity: hovered ? 1 : 0 }}
@@ -278,6 +282,7 @@ export default function Sidebar() {
 
         {/* 導航區 */}
         <nav
+          onClick={handleNavAreaClick}
           className="sidebar-nav flex-1 py-3 overflow-y-auto overflow-x-hidden"
           style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
         >
