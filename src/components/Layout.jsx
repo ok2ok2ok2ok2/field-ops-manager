@@ -1,9 +1,11 @@
 /**
  * 主佈局元件
- * 版本: v3.2
+ * 版本: v3.3
  * 日期: 2026-08-24
  * 檔案: src/components/Layout.jsx
  *
+ * v3.3：h-screen 改 h-dvh — 100vh 在手機算的是網址列收起後的高度，
+ *       導致底部待辦列掉在畫面外，要往下拉才看得到
  * v3.2：離開手機寬度時關掉抽屜；手機頂欄標題補 /monitor fallback
  * v3.1：手機版面 — 頂欄漢堡鈕 + 側邊欄抽屜（桌機行為不變）
  * v3.0：整合 WorkProvider，全域顯示 ProjectBar + PendingPanel + 相關 Modal
@@ -72,7 +74,7 @@ function LayoutInner() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ backgroundColor: '#f0f2f5' }}>
+    <div className="flex h-dvh overflow-hidden" style={{ backgroundColor: '#f0f2f5' }}>
       <Sidebar mobileOpen={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* 手機頂欄 */}

@@ -1,9 +1,10 @@
 /**
  * 收縮式側邊導航欄
- * 版本: v7.5
+ * 版本: v7.6
  * 日期: 2026-08-24
  * 檔案: src/components/Sidebar.jsx
  *
+ * v7.6：抽屜高度改 h-dvh，底部使用者列不會被手機網址列蓋掉
  * v7.5：hover 改用 pointerType 判斷（觸控筆電也不會卡開）；logo 一律可點擊固定展開
  * v7.4：手機改抽屜 (drawer)，無 hover 裝置改點擊展開 — 修「碰一下就卡開收不回去」
  * v7.3：常用功能群組 (釘選+7天點擊 top-N) / 兩群組預設收起 + localStorage persist / 加 /monthly-report
@@ -254,7 +255,7 @@ export default function Sidebar({ mobileOpen = false, onClose }) {
       <aside
         onPointerEnter={isMobile ? undefined : handlePointerEnter}
         onPointerLeave={isMobile ? undefined : handlePointerLeave}
-        className="fixed top-0 left-0 h-screen flex flex-col transition-all duration-200 ease-in-out"
+        className="fixed top-0 left-0 h-dvh flex flex-col transition-all duration-200 ease-in-out"
         style={{
           width: isMobile ? 260 : (hovered ? 240 : 64),
           transform: isMobile && !mobileOpen ? 'translateX(-100%)' : 'translateX(0)',
