@@ -1,9 +1,11 @@
 /**
  * 主佈局元件
- * 版本: v3.3
+ * 版本: v3.4
  * 日期: 2026-08-24
  * 檔案: src/components/Layout.jsx
  *
+ * v3.4：ProjectBar / PendingPanel 改「滑鼠 hover 或點標題展開」，
+ *       觸控不再卡在展開（useExpandablePanel）
  * v3.3：h-screen 改 h-dvh — 100vh 在手機算的是網址列收起後的高度，
  *       導致底部待辦列掉在畫面外，要往下拉才看得到
  * v3.2：離開手機寬度時關掉抽屜；手機頂欄標題補 /monitor fallback
@@ -108,6 +110,27 @@ function LayoutInner() {
 }
 
 /* ================================================================
+   useExpandablePanel — 面板展開狀態
+
+   只認 pointerType === 'mouse'。觸控會送出模擬的 pointerenter，
+   但永遠不送 pointerleave，綁上去面板就會卡在展開收不回來
+   （手機、觸控筆電都中招）。觸控改由點標題切換。
+   ================================================================ */
+
+function useExpandablePanel() {
+  const [hoverState, setHoverState] = useState(false)
+  const [clickOpen, setClickOpen] = useState(false)
+  return {
+    expanded: hoverState || clickOpen,
+    toggle: () => setClickOpen((v) => !v),
+    hoverProps: {
+      onPointerEnter: (e) => { if (e.pointerType === 'mouse') setHoverState(true) },
+      onPointerLeave: (e) => { if (e.pointerType === 'mouse') setHoverState(false) },
+    },
+  }
+}
+
+/* ================================================================
    MobileTopBar — 手機頂欄（漢堡鈕 + 目前頁面標題）
    ================================================================ */
 
@@ -147,22 +170,26 @@ function ProjectBar() {
     handleArchiveProject, setShowVisibilityModal,
   } = useWork()
 
-  const [hovered, setHovered] = useState(false)
+  const { expanded, toggle, hoverProps } = useExpandablePanel()
   const totalItems = Object.values(projectItemCounts).reduce((sum, n) => sum + n, 0)
 
   return (
     <div
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      {...hoverProps}
       className="border-b border-gray-200 bg-white transition-all duration-200 ease-in-out flex-shrink-0"
-      style={{ minHeight: hovered ? 120 : 48 }}
+      style={{ minHeight: expanded ? 120 : 48 }}
     >
-      <div className="flex items-center justify-between px-5 h-12">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-600">案件總覽</span>
-          <span className="text-xs text-gray-400">（{projects.length} 案件，{totalItems} 工作項目）</span>
-        </div>
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between px-3 md:px-5 h-12 gap-2">
+        <button
+          onClick={toggle}
+          className="flex items-center gap-2 min-w-0 px-1 py-1 rounded-lg hover:bg-gray-50 transition-colors"
+          title={expanded ? '收合案件列' : '展開案件列'}
+        >
+          <span className="text-xs text-gray-400 flex-shrink-0">{expanded ? '▼' : '▶'}</span>
+          <span className="text-sm font-medium text-gray-600 whitespace-nowrap">案件總覽</span>
+          <span className="hidden md:inline text-xs text-gray-400">（{projects.length} 案件，{totalItems} 工作項目）</span>
+        </button>
+        <div className="flex items-center gap-2 flex-shrink-0">
           {filterProjectId && (
             <button onClick={() => handleProjectClick(filterProjectId)}
               className="text-xs text-blue-500 hover:text-blue-700 transition-colors">✕ 取消篩選</button>
@@ -176,8 +203,8 @@ function ProjectBar() {
         </div>
       </div>
       <div className="overflow-hidden transition-all duration-200 ease-in-out"
-        style={{ maxHeight: hovered ? 300 : 0, opacity: hovered ? 1 : 0 }}>
-        <div className="flex gap-3 px-5 pb-4 overflow-x-auto">
+        style={{ maxHeight: expanded ? 300 : 0, opacity: expanded ? 1 : 0 }}>
+        <div className="flex gap-3 px-3 md:px-5 pb-4 overflow-x-auto">
           {projects.map((p) => (
             <ProjectCard key={p.id} project={p} count={projectItemCounts[p.id] || 0}
               isActive={filterProjectId === p.id}
@@ -254,7 +281,7 @@ function PendingPanel() {
     openWiModal, handleCompleteItem,
   } = useWork()
 
-  const [hovered, setHovered] = useState(false)
+  const { expanded, toggle, hoverProps } = useExpandablePanel()
   const [completingItem, setCompletingItem] = useState(null)
   const [completionDate, setCompletionDate] = useState('')
 
@@ -273,19 +300,22 @@ function PendingPanel() {
 
   return (
     <div
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      {...hoverProps}
       className="border-t border-gray-200 bg-white transition-all duration-200 ease-in-out flex-shrink-0"
     >
-      <div className="flex items-center justify-between px-5 py-3">
-        <div className="flex items-center gap-3">
-          <span className="text-sm">{hovered ? '▼' : '▶'}</span>
-          <span className="text-sm font-medium text-gray-700">待完成事項</span>
-          <span className="text-xs text-gray-400">
+      <div className="flex items-center justify-between px-3 md:px-5 py-3 gap-2">
+        <button
+          onClick={toggle}
+          className="flex items-center gap-3 min-w-0 px-1 py-1 rounded-lg hover:bg-gray-50 transition-colors"
+          title={expanded ? '收合待辦' : '展開待辦'}
+        >
+          <span className="text-sm flex-shrink-0">{expanded ? '▼' : '▶'}</span>
+          <span className="text-sm font-medium text-gray-700 whitespace-nowrap">待完成事項</span>
+          <span className="text-xs text-gray-400 whitespace-nowrap">
             {pendingItems.length} 項
             {overdueCount > 0 && <span className="text-red-500 ml-1">（逾期 {overdueCount} 項）</span>}
           </span>
-        </div>
+        </button>
         {!isReadOnly && (
           <button onClick={() => openWiModal(null)}
             className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -294,7 +324,7 @@ function PendingPanel() {
       </div>
 
       <div className="overflow-hidden transition-all duration-200 ease-in-out"
-        style={{ maxHeight: hovered ? 320 : 0, opacity: hovered ? 1 : 0 }}
+        style={{ maxHeight: expanded ? 320 : 0, opacity: expanded ? 1 : 0 }}
       >
         <div className="max-h-64 overflow-auto px-5 pb-4">
           {pendingItems.length === 0 ? (
