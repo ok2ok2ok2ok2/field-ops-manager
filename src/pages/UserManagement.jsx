@@ -1,13 +1,20 @@
 /**
  * 使用者管理頁面（Admin 專用）
- * 版本: v1.0
- * 日期: 2026-03-19
+ * 版本: v1.1
+ * 日期: 2026-09-01
  * 檔案: src/pages/UserManagement.jsx
  *
  * 功能：
  *  - 使用者列表（名稱、email、角色、可見案件數）
  *  - 編輯 Modal（名稱、角色、可見案件勾選）
  *  - 建立帳號（透過 Edge Function）
+ *  - 刪除帳號（透過 Edge Function）
+ *
+ * 變更紀錄：
+ *  v1.1 加刪除帳號。刪 auth.users 前端碰不到，走 delete-user Edge Function；
+ *       按鈕做成兩段式確認（不用 window.confirm，避免手機上長相不一致），
+ *       自己的帳號不顯示刪除鈕，後端另有「最後一個 admin 不能刪」的防呆。
+ *  v1.0 初版。
  */
 
 import { useState, useMemo, useEffect } from 'react'
@@ -183,15 +190,50 @@ export default function UserManagement() {
    ================================================================ */
 
 function EditUserModal({ user, projects, onClose }) {
+  const { user: currentUser } = useAuth()
   const [displayName, setDisplayName] = useState(user.display_name || '')
   const [role, setRole] = useState(user.role || 'user')
   const [selectedProjectIds, setSelectedProjectIds] = useState(user.project_ids || [])
   const [saving, setSaving] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  const isSelf = currentUser?.id === user.id
 
   function toggleProject(pid) {
     setSelectedProjectIds((prev) =>
       prev.includes(pid) ? prev.filter((id) => id !== pid) : [...prev, pid]
     )
+  }
+
+  async function handleDelete() {
+    setDeleting(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('未登入')
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-user`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ user_id: user.id }),
+        }
+      )
+
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || '刪除失敗')
+
+      toast.success(`已刪除帳號：${result.deleted?.display_name || user.display_name || ''}`)
+      onClose()
+    } catch (err) {
+      toast.error('刪除失敗：' + err.message)
+      setConfirmDelete(false)
+    }
+    setDeleting(false)
   }
 
   async function handleSave() {
@@ -305,11 +347,35 @@ function EditUserModal({ user, projects, onClose }) {
           </div>
         </div>
 
-        <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 transition-colors">取消</button>
-          <button onClick={handleSave} disabled={saving}
-            className="px-5 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          >{saving ? '儲存中...' : '儲存'}</button>
+        <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-3">
+          {/* 左側：刪除（危險操作，兩段式確認；自己的帳號不給刪） */}
+          <div className="min-w-0">
+            {isSelf ? (
+              <span className="text-xs text-gray-300">這是你自己的帳號</span>
+            ) : confirmDelete ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-red-500">⚠ 無法復原</span>
+                <button onClick={handleDelete} disabled={deleting}
+                  className="px-3 py-1.5 bg-red-600 text-white text-xs font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+                >{deleting ? '刪除中...' : '確定刪除'}</button>
+                <button onClick={() => setConfirmDelete(false)} disabled={deleting}
+                  className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                >取消</button>
+              </div>
+            ) : (
+              <button onClick={() => setConfirmDelete(true)}
+                className="text-xs text-red-500 hover:text-red-700 transition-colors"
+              >刪除帳號</button>
+            )}
+          </div>
+
+          {/* 右側：取消／儲存 */}
+          <div className="flex gap-3 flex-shrink-0">
+            <button onClick={onClose} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 transition-colors">取消</button>
+            <button onClick={handleSave} disabled={saving || deleting}
+              className="px-5 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >{saving ? '儲存中...' : '儲存'}</button>
+          </div>
         </div>
       </div>
     </div>
