@@ -99,7 +99,6 @@ function LayoutInner() {
         {/* 下方：待辦事項面板 */}
         <PendingPanel />
       </div>
-      <SyncStatus />
 
       {/* 全域 Modal */}
       {work.projectModalMode && (
@@ -624,6 +623,7 @@ function PendingPanel() {
               {overdueCount > 0 && <span className="text-red-500 ml-1">（逾期 {overdueCount} 項）</span>}
             </span>
           </button>
+          <SyncStatus />
           {!isReadOnly && <QuickAddBar />}
         </div>
       </div>

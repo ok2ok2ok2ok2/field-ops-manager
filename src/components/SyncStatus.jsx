@@ -1,9 +1,12 @@
 /**
  * 同步狀態指示器
- * 版本: v2.0
- * 日期: 2026-04-07
+ * 版本: v2.1
+ * 日期: 2026-09-07
  * 檔案: src/components/SyncStatus.jsx
  *
+ * v2.1：不再 fixed 浮在左下角 —— 待辦列加了快速輸入之後，這顆剛好蓋住
+ *       「待完成事項」標題，也就是桌機展開時間軸的 hover 觸發區。
+ *       改成一般元素，由 PendingPanel 直接排進底部列裡
  * v2.0：加超時保護（30秒）+ 同步失敗時正確重置狀態 + 同步前二次確認網路
  * v1.1：位置改左下角，避免擋住右下按鈕
  */
@@ -115,15 +118,13 @@ export default function SyncStatus() {
   const cfg = stateConfig[currentState]
 
   return (
-    <div className="fixed bottom-4 left-24 z-30">
-      <button
-        onClick={isOnline ? doSync : undefined}
-        className="flex items-center gap-2 px-3 py-2 rounded-full bg-white shadow-lg border text-sm hover:shadow-xl transition-shadow"
-        title={`上次同步：${formatTime(lastSync)}\n點擊手動同步`}
-      >
-        <span className={`inline-block w-2.5 h-2.5 rounded-full ${cfg.color} ${currentState === 'syncing' ? 'animate-pulse' : ''}`} />
-        <span className="text-gray-700">{cfg.text}</span>
-      </button>
-    </div>
+    <button
+      onClick={isOnline ? doSync : undefined}
+      className="flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white border border-gray-200 text-xs hover:bg-gray-50 transition-colors"
+      title={`上次同步：${formatTime(lastSync)}\n點擊手動同步`}
+    >
+      <span className={`inline-block w-2 h-2 rounded-full ${cfg.color} ${currentState === 'syncing' ? 'animate-pulse' : ''}`} />
+      <span className="text-gray-600 whitespace-nowrap">{cfg.text}</span>
+    </button>
   )
 }
