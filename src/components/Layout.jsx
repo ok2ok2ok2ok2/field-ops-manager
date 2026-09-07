@@ -1,9 +1,12 @@
 /**
  * 主佈局元件
- * 版本: v3.6
+ * 版本: v3.7
  * 日期: 2026-09-07
  * 檔案: src/components/Layout.jsx
  *
+ * v3.7：QuickAddBar 加 AI 校正鈕 —— 安卓鍵盤語音會把行話聽成別字
+ *       （更換硬碟→吸收硬碟），按 ✨ 丟 /api/fix-text 修回來。
+ *       只修字，欄位仍由 quickParse 從修好的句子重算
  * v3.6：底部待辦列加 QuickAddBar 一行快速輸入（解析日期／案件／優先權／地點）；
  *       優先權預設不顯示，按 ⚙ 才展開；分享／捷徑進來自動聚焦
  * v3.5：待辦改「整頁時間軸」— 桌機滑鼠移到底部列就彈出整頁，
@@ -43,6 +46,7 @@ import useIsMobile from '../hooks/useIsMobile'
 import { ALL_NAV_ITEMS } from '../lib/navItems'
 import { parseQuickInput } from '../lib/quickParse'
 import { getQuickAddDraft, clearQuickAddDraft } from '../lib/quickAddDraft'
+import { supabase } from '../lib/supabase'
 
 /* ================================================================
    外層：用 WorkProvider 包住內層
@@ -363,7 +367,7 @@ function useHoverOverlay() {
    ================================================================ */
 
 function QuickAddBar() {
-  const { projects, mutateWorkItems, PRIORITY_OPTIONS } = useWork()
+  const { projects, allWorkItems, mutateWorkItems, PRIORITY_OPTIONS } = useWork()
   const inputRef = useRef(null)
 
   // 分享／捷徑進來的文字在 quickAddDraft.js 模組載入時就收下了
@@ -373,6 +377,7 @@ function QuickAddBar() {
   const [advOpen, setAdvOpen] = useState(false)
   const [override, setOverride] = useState({})
   const [saving, setSaving] = useState(false)
+  const [fixing, setFixing] = useState(false)
 
   // 從分享／捷徑進來就把游標放進輸入框，順手把網址參數與草稿清掉
   useEffect(() => {
@@ -436,6 +441,45 @@ function QuickAddBar() {
     }
   }
 
+  /* 語音打完按 ✨：把整句丟後端修錯字。
+     只修字，日期／案件／優先權還是由本機解析器從修好的句子重算 —— 兩邊
+     都能決定欄位的話，對不起來時沒人知道該信誰。 */
+  async function aiFix() {
+    const raw = text.trim()
+    if (!raw) { toast.error('先講一句話再校正'); return }
+    if (!navigator.onLine) { toast.error('離線中，校正要連網'); return }
+    setFixing(true)
+    try {
+      const { data } = await supabase.auth.getSession()
+      const tokenValue = data?.session?.access_token
+      if (!tokenValue) { toast.error('登入狀態過期，重新整理一下'); return }
+
+      const r = await fetch('/api/fix-text', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tokenValue}`,
+        },
+        body: JSON.stringify({
+          text: raw,
+          projects: projects.map((p) => p.name),
+          // 拿使用者自己以前打過的待辦當詞彙表，比寫死一份術語表準
+          vocab: (allWorkItems || []).slice(0, 60).map((w) => w.name).filter(Boolean),
+        }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) { toast.error(j.error || `校正失敗（${r.status}）`); return }
+
+      setText(j.corrected)
+      toast.success(j.changed ? '已校正，確認一下再送出' : '沒抓到錯字')
+      inputRef.current?.focus()
+    } catch (err) {
+      toast.error('校正失敗：' + err.message)
+    } finally {
+      setFixing(false)
+    }
+  }
+
   const projectName =
     projects.find((p) => p.id === project_id)?.name || parsed.project_name
 
@@ -454,6 +498,12 @@ function QuickAddBar() {
           placeholder="打一句話新增待辦，例：明天 #世曦 換硬碟！"
           className="flex-1 min-w-0 px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
         />
+        <button
+          onClick={aiFix}
+          disabled={fixing || !text.trim()}
+          className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-sm text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+          title="語音打完按這顆修錯字"
+        >{fixing ? '…' : '✨'}</button>
         <button
           onClick={() => setAdvOpen((v) => !v)}
           className={`flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${
