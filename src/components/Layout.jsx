@@ -1,9 +1,11 @@
 /**
  * 主佈局元件
- * 版本: v3.4
- * 日期: 2026-08-24
+ * 版本: v3.5
+ * 日期: 2026-09-07
  * 檔案: src/components/Layout.jsx
  *
+ * v3.5：待辦改「整頁時間軸」— 桌機滑鼠移到底部列就彈出整頁，
+ *       依案件分組畫時間軸；觸控只認點擊（點標題開、✕／底色／Esc 關）
  * v3.4：ProjectBar / PendingPanel 改「滑鼠 hover 或點標題展開」，
  *       觸控不再卡在展開（useExpandablePanel）
  * v3.3：h-screen 改 h-dvh — 100vh 在手機算的是網址列收起後的高度，
@@ -269,21 +271,144 @@ function ProjectCard({ project, count, isActive, onFilter, onEdit, onArchive }) 
 }
 
 /* ================================================================
-   PendingPanel — 待完成事項面板
+   PendingPanel — 待完成事項（底部列 + 整頁時間軸）
+
+   桌機：滑鼠移到底部列 → 整頁時間軸彈出（依案件分組）
+   觸控：只認點擊。觸控會送出模擬 pointerenter 但永遠不送
+         pointerleave，綁 hover 會卡在展開收不回來。
    ================================================================ */
 
 const PRIORITY_BADGE = { '高': 'bg-red-100 text-red-600', '中': 'bg-amber-100 text-amber-600', '低': 'bg-gray-100 text-gray-500' }
 const STATUS_BADGE = { '待處理': 'bg-gray-100 text-gray-600', '進行中': 'bg-blue-100 text-blue-600', '擱置': 'bg-amber-100 text-amber-600' }
 
+/* 到期狀態 → 圓點顏色 / 文字顏色 */
+const DUE_TONE = {
+  overdue: { dot: 'bg-red-500', text: 'text-red-600 font-medium' },
+  today: { dot: 'bg-orange-500', text: 'text-orange-600 font-medium' },
+  soon: { dot: 'bg-amber-400', text: 'text-amber-600' },
+  later: { dot: 'bg-blue-400', text: 'text-gray-500' },
+  none: { dot: 'bg-gray-300', text: 'text-gray-300' },
+}
+
+function dueMeta(due, todayStr) {
+  if (!due) return { label: '未排定', tone: 'none', order: 99999 }
+  const d = Math.round(
+    (new Date(due + 'T00:00:00') - new Date(todayStr + 'T00:00:00')) / 86400000
+  )
+  const md = due.substring(5)
+  if (d < 0) return { label: md + '　逾期 ' + (-d) + ' 天', tone: 'overdue', order: d }
+  if (d === 0) return { label: md + '　今天到期', tone: 'today', order: 0 }
+  if (d <= 3) return { label: md + '　還有 ' + d + ' 天', tone: 'soon', order: d }
+  return { label: md, tone: 'later', order: d }
+}
+
+/* ── hover（滑鼠）／點擊（觸控）兩用的開關 ───────────────────
+
+   兩組 props 分工，避免「面板一彈出就自己關掉」：
+   - triggerProps（底部列）：進入排程開啟，離開只取消排程，不排關閉。
+     面板一彈出就蓋住底部列，底部列必然收到 pointerleave；
+     若那裡排關閉，就會跟面板的 pointerenter 搶時序。
+   - panelProps（面板）：進入取消關閉，離開才排關閉。
+   兩者都只認 pointerType === 'mouse'；觸控送 pointerenter 卻永遠
+   不送 pointerleave，綁上去會卡在展開收不回來。
+   ================================================================ */
+
+function useHoverOverlay() {
+  const [open, setOpen] = useState(false)
+  const timerRef = useRef(null)
+
+  function clearTimer() {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
+  }
+  useEffect(() => clearTimer, [])
+
+  return {
+    open,
+    close: () => { clearTimer(); setOpen(false) },
+    toggle: () => { clearTimer(); setOpen((v) => !v) },
+    triggerProps: {
+      onPointerEnter: (e) => {
+        if (e.pointerType !== 'mouse') return
+        clearTimer()
+        timerRef.current = setTimeout(() => setOpen(true), 150)
+      },
+      onPointerLeave: (e) => {
+        if (e.pointerType !== 'mouse') return
+        clearTimer()
+      },
+    },
+    panelProps: {
+      onPointerEnter: (e) => { if (e.pointerType === 'mouse') clearTimer() },
+      onPointerLeave: (e) => {
+        if (e.pointerType !== 'mouse') return
+        clearTimer()
+        timerRef.current = setTimeout(() => setOpen(false), 200)
+      },
+    },
+  }
+}
+
 function PendingPanel() {
   const {
     pendingItems, overdueCount, isReadOnly, teamMode, userNameMap,
-    openWiModal, handleCompleteItem,
+    projects, filterProjectId, handleProjectClick,
+    openWiModal, handleCompleteItem, PROJECT_TYPE_ICON,
   } = useWork()
 
-  const { expanded, toggle, hoverProps } = useExpandablePanel()
+  const { open, close, toggle, triggerProps, panelProps } = useHoverOverlay()
   const [completingItem, setCompletingItem] = useState(null)
   const [completionDate, setCompletionDate] = useState('')
+
+  const todayStr = format(new Date(), 'yyyy-MM-dd')
+
+  // Esc 關閉
+  useEffect(() => {
+    if (!open) return
+    function onKey(e) { if (e.key === 'Escape') close() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open, close])
+
+  // 依案件分組，組內依到期日排序；快到期／逾期的案件排前面
+  const groups = useMemo(() => {
+    const projectMap = {}
+    for (const p of projects) projectMap[p.id] = p
+
+    const map = new Map()
+    for (const wi of pendingItems) {
+      const key = wi.project_id || '_none'
+      if (!map.has(key)) {
+        const p = projectMap[wi.project_id] || wi.projects
+        map.set(key, {
+          key,
+          id: wi.project_id || null,
+          name: (p && p.name) || '未指定案件',
+          type: (p && p.type) || null,
+          items: [],
+        })
+      }
+      map.get(key).items.push(wi)
+    }
+
+    const list = [...map.values()]
+    for (const g of list) {
+      g.items.sort((a, b) => {
+        const oa = dueMeta(a.due_date, todayStr).order
+        const ob = dueMeta(b.due_date, todayStr).order
+        if (oa !== ob) return oa - ob
+        return (a.name || '').localeCompare(b.name || '')
+      })
+      g.overdue = g.items.filter((wi) => wi.due_date && wi.due_date < todayStr).length
+      g.earliest = g.items.length > 0 ? dueMeta(g.items[0].due_date, todayStr).order : 99999
+    }
+    list.sort((a, b) => {
+      if (a.key === '_none') return 1
+      if (b.key === '_none') return -1
+      if (a.earliest !== b.earliest) return a.earliest - b.earliest
+      return b.items.length - a.items.length
+    })
+    return list
+  }, [pendingItems, projects, todayStr])
 
   function handleCheckClick(e, wi) {
     e.stopPropagation()
@@ -299,74 +424,134 @@ function PendingPanel() {
   }
 
   return (
-    <div
-      {...hoverProps}
-      className="border-t border-gray-200 bg-white transition-all duration-200 ease-in-out flex-shrink-0"
-    >
-      <div className="flex items-center justify-between px-3 md:px-5 py-3 gap-2">
-        <button
-          onClick={toggle}
-          className="flex items-center gap-3 min-w-0 px-1 py-1 rounded-lg hover:bg-gray-50 transition-colors"
-          title={expanded ? '收合待辦' : '展開待辦'}
-        >
-          <span className="text-sm flex-shrink-0">{expanded ? '▼' : '▶'}</span>
-          <span className="text-sm font-medium text-gray-700 whitespace-nowrap">待完成事項</span>
-          <span className="text-xs text-gray-400 whitespace-nowrap">
-            {pendingItems.length} 項
-            {overdueCount > 0 && <span className="text-red-500 ml-1">（逾期 {overdueCount} 項）</span>}
-          </span>
-        </button>
-        {!isReadOnly && (
-          <button onClick={() => openWiModal(null)}
-            className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >＋ 新增待辦</button>
-        )}
-      </div>
-
-      <div className="overflow-hidden transition-all duration-200 ease-in-out"
-        style={{ maxHeight: expanded ? 320 : 0, opacity: expanded ? 1 : 0 }}
+    <>
+      {/* ── 底部列（永遠在）───────────────────────────── */}
+      <div
+        {...triggerProps}
+        className="border-t border-gray-200 bg-white flex-shrink-0"
       >
-        <div className="max-h-64 overflow-auto px-5 pb-4">
-          {pendingItems.length === 0 ? (
-            <p className="text-xs text-gray-300 py-4 text-center">沒有待完成項目 🎉</p>
-          ) : (
-            <div className="space-y-1.5">
-              {pendingItems.map((wi) => {
-                const todayStr = format(new Date(), 'yyyy-MM-dd')
-                const isOverdue = wi.due_date && wi.due_date < todayStr
-                return (
-                  <div key={wi.id} onClick={() => openWiModal(wi)}
-                    className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm cursor-pointer transition-colors hover:ring-1 hover:ring-blue-300 ${isOverdue ? 'bg-red-50' : 'bg-gray-50 hover:bg-blue-50'}`}
-                  >
-                    {teamMode && wi.user_id && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 font-medium flex-shrink-0">
-                        {userNameMap[wi.user_id] || '?'}
-                      </span>
-                    )}
-                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${PRIORITY_BADGE[wi.priority] || ''}`}>{wi.priority}</span>
-                    <span className="flex-1 text-gray-700 truncate">{wi.name}</span>
-                    {wi.projects && <span className="text-xs text-blue-400 flex-shrink-0">[{wi.projects.name}]</span>}
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${STATUS_BADGE[wi.status] || ''}`}>{wi.status}</span>
-                    {wi.due_date && (
-                      <span className={`text-xs flex-shrink-0 ${isOverdue ? 'text-red-500 font-medium' : 'text-gray-400'}`}>{wi.due_date.substring(5)}</span>
-                    )}
-                    {!isReadOnly && (
-                      <button onClick={(e) => handleCheckClick(e, wi)}
-                        className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-green-500 hover:bg-green-100 hover:text-green-700 transition-colors text-base"
-                        title="標記完成"
-                      >✓</button>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
+        <div className="flex items-center justify-between px-3 md:px-5 py-3 gap-2">
+          <button
+            onClick={toggle}
+            className="flex items-center gap-3 min-w-0 px-1 py-1 rounded-lg hover:bg-gray-50 transition-colors"
+            title={open ? '收合待辦' : '展開待辦時間軸'}
+          >
+            <span className="text-sm flex-shrink-0">{open ? '▼' : '▲'}</span>
+            <span className="text-sm font-medium text-gray-700 whitespace-nowrap">待完成事項</span>
+            <span className="text-xs text-gray-400 whitespace-nowrap">
+              {pendingItems.length} 項
+              {overdueCount > 0 && <span className="text-red-500 ml-1">（逾期 {overdueCount} 項）</span>}
+            </span>
+          </button>
+          {!isReadOnly && (
+            <button onClick={() => openWiModal(null)}
+              className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >＋ 新增待辦</button>
           )}
         </div>
       </div>
 
+      {/* ── 整頁時間軸 ─────────────────────────────────── */}
+      {open && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/40" onClick={close} />
+          <div
+            {...panelProps}
+            className="absolute inset-x-0 bottom-0 top-12 md:top-14 bg-white md:rounded-t-2xl shadow-2xl flex flex-col overflow-hidden"
+          >
+            {/* 標頭 */}
+            <div className="flex items-center justify-between gap-2 px-3 md:px-6 py-3 border-b border-gray-100 flex-shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="text-base font-bold text-gray-800 whitespace-nowrap">待辦時間軸</span>
+                <span className="text-xs text-gray-400 whitespace-nowrap">
+                  {groups.length} 案件 · {pendingItems.length} 項
+                  {overdueCount > 0 && <span className="text-red-500 ml-1">（逾期 {overdueCount} 項）</span>}
+                </span>
+                {filterProjectId && (
+                  <button onClick={() => handleProjectClick(filterProjectId)}
+                    className="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100 transition-colors whitespace-nowrap"
+                  >✕ 取消案件篩選</button>
+                )}
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {!isReadOnly && (
+                  <button onClick={() => openWiModal(null)}
+                    className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >＋ 新增待辦</button>
+                )}
+                <button onClick={close}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+                  title="關閉"
+                >✕</button>
+              </div>
+            </div>
+
+            {/* 內容 */}
+            <div className="flex-1 overflow-auto px-3 md:px-6 py-4">
+              {groups.length === 0 ? (
+                <p className="text-sm text-gray-300 py-16 text-center">沒有待完成項目 🎉</p>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {groups.map((g) => (
+                    <section key={g.key} className="rounded-2xl border border-gray-100 bg-gray-50/60 p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="text-base">{PROJECT_TYPE_ICON[g.type] || '📁'}</span>
+                        <span className="text-sm font-bold text-gray-800 truncate">{g.name}</span>
+                        <span className="text-xs text-gray-400 flex-shrink-0 ml-auto">
+                          {g.items.length} 項
+                          {g.overdue > 0 && <span className="text-red-500 ml-1">逾期 {g.overdue}</span>}
+                        </span>
+                      </div>
+
+                      <ol className="relative ml-1.5 pl-5 border-l-2 border-gray-200 space-y-2">
+                        {g.items.map((wi) => {
+                          const meta = dueMeta(wi.due_date, todayStr)
+                          const tone = DUE_TONE[meta.tone]
+                          return (
+                            <li key={wi.id} className="relative">
+                              <span className={`absolute -left-[1.65rem] top-3 w-2.5 h-2.5 rounded-full ring-2 ring-white ${tone.dot}`} />
+                              <div
+                                onClick={() => openWiModal(wi)}
+                                className="bg-white rounded-lg px-3 py-2 cursor-pointer transition-colors hover:ring-1 hover:ring-blue-300 hover:bg-blue-50/40"
+                              >
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className={`text-xs ${tone.text}`}>{meta.label}</span>
+                                  {teamMode && wi.user_id && (
+                                    <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 font-medium">
+                                      {userNameMap[wi.user_id] || '?'}
+                                    </span>
+                                  )}
+                                  <span className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+                                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${PRIORITY_BADGE[wi.priority] || ''}`}>{wi.priority}</span>
+                                    <span className={`text-xs px-1.5 py-0.5 rounded ${STATUS_BADGE[wi.status] || ''}`}>{wi.status}</span>
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="flex-1 text-sm text-gray-700 break-words">{wi.name}</span>
+                                  {!isReadOnly && (
+                                    <button onClick={(e) => handleCheckClick(e, wi)}
+                                      className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-green-500 hover:bg-green-100 hover:text-green-700 transition-colors text-base"
+                                      title="標記完成"
+                                    >✓</button>
+                                  )}
+                                </div>
+                              </div>
+                            </li>
+                          )
+                        })}
+                      </ol>
+                    </section>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 快速完成 popup */}
       {completingItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/30" onClick={() => setCompletingItem(null)} />
           <div className="relative bg-white rounded-2xl shadow-2xl w-72 p-5">
             <p className="text-sm font-bold text-gray-800 mb-1">標記完成</p>
@@ -384,9 +569,10 @@ function PendingPanel() {
           </div>
         </div>
       )}
-    </div>
+    </>
   )
 }
+
 
 /* ================================================================
    VisibilityModal — 案件顯示/隱藏設定
