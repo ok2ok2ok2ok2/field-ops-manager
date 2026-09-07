@@ -17,6 +17,7 @@ export const FIELD_NAV_ITEMS = [
   { path: '/maintenance-adhoc',   label: '機動維護',   icon: '🛠️' },
   { path: '/repair-orders',       label: '送修單',     icon: '🔧' },
   { path: '/monthly-report',      label: '月報表',     icon: '📤' },
+  { path: '/voice',               label: '語音記事',   icon: '🎙️' },
 ]
 
 export const ADMIN_NAV_ITEMS = [

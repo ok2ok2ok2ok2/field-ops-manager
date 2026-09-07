@@ -40,6 +40,13 @@ export default defineConfig({
         // ★ 長按 App 圖示 → 直接跳快速輸入
         shortcuts: [
           {
+            name: '語音記事',
+            short_name: '語音記事',
+            description: '車上用：按一下就開始錄，講完自動存草稿',
+            url: '/voice',
+            icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png' }],
+          },
+          {
             name: '新增待辦',
             short_name: '新增待辦',
             description: '直接開啟待辦快速輸入',

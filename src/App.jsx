@@ -27,6 +27,7 @@ import AdHocMaintenanceList from './pages/AdHocMaintenanceList'
 import RepairOrderList from './pages/RepairOrderList'
 import IframePage from './pages/IframePage'
 import MonthlyReport from './pages/MonthlyReport'
+import VoiceCapture from './pages/VoiceCapture'
 
 export default function App() {
   return (
@@ -57,6 +58,7 @@ export default function App() {
               <Route path="/monitor" element={<IframePage />} />
               {/* 月報表匯出 (公差單/加班表) */}
               <Route path="/monthly-report" element={<MonthlyReport />} />
+              <Route path="/voice" element={<VoiceCapture />} />
               {/* 舊路由重導 */}
               <Route path="/kanban" element={<Navigate to="/" replace />} />
               <Route path="/daily-log" element={<Navigate to="/" replace />} />
