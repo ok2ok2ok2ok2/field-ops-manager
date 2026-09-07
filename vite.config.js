@@ -29,6 +29,24 @@ export default defineConfig({
         orientation: 'portrait',
         scope: '/',
         start_url: '/',
+        // ★ Android 分享選單：任何 App 選字分享過來就開快速輸入
+        //   action 必須寫絕對網址 —— 相對路徑在 Android 分享選單不穩定，
+        //   而且改完 manifest 要把 PWA 從桌面移除重裝才會生效（WebAPK 會快取）
+        share_target: {
+          action: 'https://field-ops-manager-phi.vercel.app/',
+          method: 'GET',
+          params: { title: 'title', text: 'text', url: 'url' },
+        },
+        // ★ 長按 App 圖示 → 直接跳快速輸入
+        shortcuts: [
+          {
+            name: '新增待辦',
+            short_name: '新增待辦',
+            description: '直接開啟待辦快速輸入',
+            url: '/?quickadd=1',
+            icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png' }],
+          },
+        ],
         icons: [
           {
             src: '/icon-192.png',

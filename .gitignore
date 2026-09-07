@@ -32,3 +32,5 @@ Thumbs.db
 # 日誌
 *.log
 npm-debug.log*
+# DeepSeek 委派過程記錄，不進版控
+*.dslog.md

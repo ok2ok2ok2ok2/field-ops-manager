@@ -1,9 +1,11 @@
 /**
  * 主佈局元件
- * 版本: v3.5
+ * 版本: v3.6
  * 日期: 2026-09-07
  * 檔案: src/components/Layout.jsx
  *
+ * v3.6：底部待辦列加 QuickAddBar 一行快速輸入（解析日期／案件／優先權／地點）；
+ *       優先權預設不顯示，按 ⚙ 才展開；分享／捷徑進來自動聚焦
  * v3.5：待辦改「整頁時間軸」— 桌機滑鼠移到底部列就彈出整頁，
  *       依案件分組畫時間軸；觸控只認點擊（點標題開、✕／底色／Esc 關）
  * v3.4：ProjectBar / PendingPanel 改「滑鼠 hover 或點標題展開」，
@@ -39,6 +41,8 @@ import { getLogByDate, createLog } from '../api/dailyLogs'
 import { useAuth } from '../contexts/AuthContext'
 import useIsMobile from '../hooks/useIsMobile'
 import { ALL_NAV_ITEMS } from '../lib/navItems'
+import { parseQuickInput } from '../lib/quickParse'
+import { getQuickAddDraft, clearQuickAddDraft } from '../lib/quickAddDraft'
 
 /* ================================================================
    外層：用 WorkProvider 包住內層
@@ -348,6 +352,183 @@ function useHoverOverlay() {
   }
 }
 
+/* ================================================================
+   QuickAddBar — 一行快速輸入
+
+   打一句話直接建待辦，日期／案件／優先權從句子裡解析出來。
+   手機不自己做語音辨識：按鍵盤上的麥克風鍵講，文字進到這個框，
+   看得到也改得動，送出前還有機會修。2026-07-30 試過 Web Speech
+   自己辨識，錯誤率高又不會自我校正，已否決。
+
+   優先權預設不出現，要按 ⚙ 才展開；平常打字不必想這件事。
+   ================================================================ */
+
+function QuickAddBar() {
+  const { projects, mutateWorkItems, PRIORITY_OPTIONS } = useWork()
+  const inputRef = useRef(null)
+
+  // 分享／捷徑進來的文字在 quickAddDraft.js 模組載入時就收下了
+  // （比 React 渲染早，早於 /login 轉址把網址洗掉）
+  const fromShare = getQuickAddDraft() !== null
+  const [text, setText] = useState(() => getQuickAddDraft() || '')
+  const [advOpen, setAdvOpen] = useState(false)
+  const [override, setOverride] = useState({})
+  const [saving, setSaving] = useState(false)
+
+  // 從分享／捷徑進來就把游標放進輸入框，順手把網址參數與草稿清掉
+  useEffect(() => {
+    if (!fromShare) return
+    clearQuickAddDraft()
+    inputRef.current?.focus()
+    if (window.location.search) {
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+  }, [fromShare])
+
+  const parsed = useMemo(
+    () => parseQuickInput(text, { projects }),
+    [text, projects]
+  )
+
+  // 手動設定蓋過解析結果
+  const due_date = override.due_date !== undefined ? override.due_date : parsed.due_date
+  const priority = override.priority !== undefined ? override.priority : parsed.priority
+  const project_id = override.project_id !== undefined ? override.project_id : parsed.project_id
+
+  // work_items 還沒有 location 欄位，先接回名稱裡不要弄丟
+  // （之後要接 AI 排行程、天氣、導航才需要真的加欄位）
+  const finalName = parsed.location
+    ? `${parsed.name}（${parsed.location}）`.trim()
+    : parsed.name
+
+  const canSubmit = finalName.trim().length > 0 && !saving
+
+  async function submit() {
+    if (!canSubmit) {
+      if (!saving) toast.error('要先打點東西')
+      return
+    }
+    setSaving(true)
+    try {
+      await createWorkItem({
+        name: finalName.trim(),
+        status: '待處理',
+        priority: priority || '中',
+        due_date: due_date || null,
+        project_id: project_id || null,
+      })
+      mutateWorkItems()
+      toast.success('已新增')
+      setText('')
+      setOverride({})
+      setAdvOpen(false)
+      inputRef.current?.focus()
+    } catch (err) {
+      toast.error('新增失敗：' + err.message)
+    }
+    setSaving(false)
+  }
+
+  function onKeyDown(e) {
+    // 中文輸入法組字中的 Enter 是在選字，不能當送出
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+      e.preventDefault()
+      submit()
+    }
+  }
+
+  const projectName =
+    projects.find((p) => p.id === project_id)?.name || parsed.project_name
+
+  const showChips = text.trim().length > 0 && (due_date || priority || projectName || parsed.location)
+
+  return (
+    <div className="basis-full md:basis-0 md:flex-1 min-w-0">
+      <div className="flex items-center gap-1.5">
+        <input
+          ref={inputRef}
+          type="text"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onKeyDown}
+          enterKeyHint="done"
+          placeholder="打一句話新增待辦，例：明天 #世曦 換硬碟！"
+          className="flex-1 min-w-0 px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+        />
+        <button
+          onClick={() => setAdvOpen((v) => !v)}
+          className={`flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-sm transition-colors ${
+            advOpen ? 'bg-gray-200 text-gray-700' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
+          }`}
+          title="進階：優先權／到期日／案件"
+        >⚙</button>
+        <button
+          onClick={submit}
+          disabled={!canSubmit}
+          className="flex-shrink-0 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:bg-gray-200 disabled:text-gray-400 transition-colors"
+          title="新增（Enter）"
+        >{saving ? '…' : '＋'}</button>
+      </div>
+
+      {/* 解析結果 —— 讓人看得到系統聽懂了什麼 */}
+      {showChips && (
+        <div className="flex flex-wrap items-center gap-1.5 mt-1.5 px-0.5">
+          {due_date && <QuickChip icon="📅" text={due_date} />}
+          {projectName && <QuickChip icon="📁" text={projectName} />}
+          {priority && <QuickChip icon="⚡" text={priority} />}
+          {parsed.location && <QuickChip icon="📍" text={parsed.location} />}
+        </div>
+      )}
+
+      {/* 進階設定 —— 平常收起來 */}
+      {advOpen && (
+        <div className="mt-2 p-3 bg-gray-50 rounded-xl space-y-2.5">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 w-12 flex-shrink-0">優先權</span>
+            <div className="flex gap-1">
+              {PRIORITY_OPTIONS.map((p) => (
+                <button key={p}
+                  onClick={() => setOverride((o) => ({ ...o, priority: o.priority === p ? undefined : p }))}
+                  className={`text-xs px-2.5 py-1 rounded-lg transition-colors ${
+                    priority === p ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-300' : 'bg-white text-gray-500 hover:bg-gray-100'
+                  }`}
+                >{p}</button>
+              ))}
+              <span className="text-xs text-gray-300 self-center ml-1">未選＝中</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 w-12 flex-shrink-0">到期日</span>
+            <input type="date" value={due_date || ''}
+              onChange={(e) => setOverride((o) => ({ ...o, due_date: e.target.value || null }))}
+              className="px-2 py-1 border border-gray-200 rounded-lg text-xs bg-white" />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 w-12 flex-shrink-0">案件</span>
+            <select value={project_id || ''}
+              onChange={(e) => setOverride((o) => ({ ...o, project_id: e.target.value || null }))}
+              className="flex-1 min-w-0 px-2 py-1 border border-gray-200 rounded-lg text-xs bg-white">
+              <option value="">不指定</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+          <p className="text-xs text-gray-400 leading-relaxed">
+            句子裡也可以直接寫：明天／下週三／9-12／月底、#案件、@地點、結尾加！＝高優先
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function QuickChip({ icon, text }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full">
+      <span>{icon}</span>{text}
+    </span>
+  )
+}
+
 function PendingPanel() {
   const {
     pendingItems, overdueCount, isReadOnly, teamMode, userNameMap,
@@ -426,12 +607,12 @@ function PendingPanel() {
   return (
     <>
       {/* ── 底部列（永遠在）───────────────────────────── */}
-      <div
-        {...triggerProps}
-        className="border-t border-gray-200 bg-white flex-shrink-0"
-      >
-        <div className="flex items-center justify-between px-3 md:px-5 py-3 gap-2">
+      <div className="border-t border-gray-200 bg-white flex-shrink-0">
+        <div className="flex flex-wrap items-center gap-2 px-3 md:px-5 py-2.5">
+          {/* hover 只掛在這顆摘要鈕上，不掛整條列 —— 不然滑鼠移去
+              快速輸入框打字時整頁時間軸會一直彈出來擋路 */}
           <button
+            {...triggerProps}
             onClick={toggle}
             className="flex items-center gap-3 min-w-0 px-1 py-1 rounded-lg hover:bg-gray-50 transition-colors"
             title={open ? '收合待辦' : '展開待辦時間軸'}
@@ -443,11 +624,7 @@ function PendingPanel() {
               {overdueCount > 0 && <span className="text-red-500 ml-1">（逾期 {overdueCount} 項）</span>}
             </span>
           </button>
-          {!isReadOnly && (
-            <button onClick={() => openWiModal(null)}
-              className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >＋ 新增待辦</button>
-          )}
+          {!isReadOnly && <QuickAddBar />}
         </div>
       </div>
 
