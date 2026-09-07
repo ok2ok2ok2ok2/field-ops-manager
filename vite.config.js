@@ -63,8 +63,7 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         // ★ /login 不走 service worker fallback
-        // ★ /voice-demo.html 為獨立測試頁, 不走 SPA fallback (讓它直接拿到真檔)
-        navigateFallbackDenylist: [/^\/login/, /^\/voice-demo\.html$/],
+        navigateFallbackDenylist: [/^\/login/],
         runtimeCaching: [
           // ★ Auth API 不快取（NetworkOnly）
           {
