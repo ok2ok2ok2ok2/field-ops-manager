@@ -1,11 +1,12 @@
 /**
  * 月報表拆解 — 把 daily_logs 拆成公差單 + 加班表兩份資料
- * 版本: v0.2.0
+ * 版本: v0.3.0
  * 日期: 2026-10-06
  * 檔案: src/lib/monthlyReport.js
  *
  * 規則常數集中在頂端方便微調。
  *
+ * v0.3.0: 抽出 recalcTrip / overtimeRowsForTrip, 公差單改時間可連動加班表 (_id / _src 對應)
  * v0.2.0: 加班級距改「同一天累計」(早+晚兩段共用前 2 小時額度);
  *         六日整段外勤都算加班 (原本只算 08:30–17:30 以外, 周六 9–17 會算成 0)
  */
@@ -139,6 +140,50 @@ export function allocateBreakdowns(ots, onlyDates = null) {
   return next
 }
 
+/* ========== 公差列 → 加班列 ========== */
+/** 公差單改了日期/起訖時, 重算該列時數與誤餐 */
+export function recalcTrip(trip, rules = RULES) {
+  const meal = calcMealFee(trip.start_hhmm, trip.end_hhmm, rules)
+  return {
+    ...trip,
+    roc_year: trip.log_date ? rocYear(trip.log_date) : '',
+    hours: hoursBetween(trip.start_hhmm, trip.end_hhmm),
+    meal_fee: meal.fee,
+    meal_tags: meal.tags,
+  }
+}
+
+/** 一筆公差產生的加班列 (breakdown 留空, 由 allocateBreakdowns 依當天累計分配) */
+export function overtimeRowsForTrip(trip, rules = RULES) {
+  const { log_date, start_hhmm: start, end_hhmm: end } = trip
+  if (!log_date || !start || !end) return []
+  // 休假日 (六日) 整段外勤都算加班, 不扣午休; 上班日只算 08:30–17:30 以外
+  const segs = isRestDay(log_date)
+    ? [{ start, end, position: 'rest' }]
+    : splitOvertime(start, end, rules)
+  return segs
+    .map((seg) => ({
+      _src: trip._id,
+      log_date,
+      roc_year: rocYear(log_date),
+      start_hhmm: seg.start,
+      end_hhmm: seg.end,
+      hours: hoursBetween(seg.start, seg.end),
+      position: seg.position,
+      remark: trip.remark || '',
+      project: trip.project || '',
+      breakdown: [],
+    }))
+    .filter((o) => o.hours > 0)
+}
+
+/** 依日期 + 起始時間排序 (加班表顯示與匯出順序) */
+export function sortOts(ots) {
+  return [...ots].sort((a, b) =>
+    (a.log_date || '9999').localeCompare(b.log_date || '9999') ||
+    (a.start_hhmm || '').localeCompare(b.start_hhmm || ''))
+}
+
 /* ========== 主拆解函數 ========== */
 /**
  * @param {Array} logs - daily_logs, 需有 log_date, field_start, field_end, field_locations, work_summary, work_items
@@ -164,36 +209,20 @@ export function buildReport(logs, rules = RULES) {
     const remark = pickRemark(log)
     const meal = calcMealFee(start, end, rules)
 
-    businessTrips.push({
+    const trip = {
+      _id: `t${businessTrips.length}`,
       log_date: log.log_date,
       roc_year: rocYear(log.log_date),
       start_hhmm: start,
       end_hhmm: end,
       hours: total_hours,
       remark,
+      project: pickProject(log),
       meal_fee: meal.fee,
       meal_tags: meal.tags,
-    })
-
-    // 休假日 (六日) 整段外勤都算加班; 上班日只算 08:30–17:30 以外
-    const otSegs = isRestDay(log.log_date)
-      ? [{ start, end, position: 'rest' }]
-      : splitOvertime(start, end, rules)
-    for (const seg of otSegs) {
-      const hrs = hoursBetween(seg.start, seg.end)
-      if (hrs <= 0) continue
-      overtimes.push({
-        log_date: log.log_date,
-        roc_year: rocYear(log.log_date),
-        start_hhmm: seg.start,
-        end_hhmm: seg.end,
-        hours: hrs,
-        position: seg.position,
-        remark,
-        project: pickProject(log),
-        breakdown: [],
-      })
     }
+    businessTrips.push(trip)
+    overtimes.push(...overtimeRowsForTrip(trip, rules))
   }
 
   const allocated = allocateBreakdowns(overtimes)

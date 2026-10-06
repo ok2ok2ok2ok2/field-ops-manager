@@ -1,9 +1,10 @@
 /**
  * 月報表 — 從 daily_logs 拆成公差單 + 加班表, 可編輯 + 匯出 xlsx
- * 版本: v0.3.0
+ * 版本: v0.4.0
  * 日期: 2026-10-06
  * 檔案: src/pages/MonthlyReport.jsx
  *
+ * v0.4.0: 公差單改日期/起訖 → 時數、誤餐、加班表連動; 刪公差列一併刪其加班列
  * v0.3.0: 加班表改起訖/日期/時數會自動重算; 級距按同一天累計 (上班日超過 2h 進 2+, 周六同理)
  * v0.2.0: 可編輯 (inline input, 加/刪列) + 匯出 xlsx (以範本為骨架)
  * v0.1.0: read-only 預覽
@@ -12,7 +13,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getLogsByMonth } from '../api/dailyLogs'
 import { getWorkItemsByLogIds } from '../api/workItems'
-import { buildReport, RULES, allocateBreakdowns, hoursBetween } from '../lib/monthlyReport'
+import {
+  buildReport, RULES, allocateBreakdowns, hoursBetween, recalcTrip, overtimeRowsForTrip, sortOts,
+} from '../lib/monthlyReport'
 import { exportBusinessTrip, exportOvertime } from '../lib/monthlyReportExport'
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
@@ -75,7 +78,8 @@ export default function MonthlyReport() {
   async function doExportTrip() {
     try {
       if (trips.length === 0) return toast.error('沒有公差資料')
-      await exportBusinessTrip(applicant, trips)
+      await exportBusinessTrip(applicant, [...trips].sort((a, b) =>
+        (a.log_date || '9999').localeCompare(b.log_date || '9999') || (a.start_hhmm || '').localeCompare(b.start_hhmm || '')))
       toast.success('公差單已下載')
     } catch (e) {
       toast.error('匯出失敗: ' + (e?.message || e))
@@ -85,7 +89,7 @@ export default function MonthlyReport() {
   async function doExportOt() {
     try {
       if (ots.length === 0) return toast.error('沒有加班資料')
-      await exportOvertime(applicant, ots)
+      await exportOvertime(applicant, sortOts(ots))
       toast.success('加班表已下載')
     } catch (e) {
       toast.error('匯出失敗: ' + (e?.message || e))
@@ -96,7 +100,7 @@ export default function MonthlyReport() {
     <div className="p-4 max-w-6xl mx-auto">
       <div className="flex items-baseline gap-2 mb-3">
         <h1 className="text-xl font-bold">月報表匯出</h1>
-        <span className="text-xs text-gray-500">v0.3.0 · 可編輯 + 匯出 xlsx</span>
+        <span className="text-xs text-gray-500">v0.4.0 · 可編輯 + 匯出 xlsx</span>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 bg-white rounded shadow-sm p-3 mb-4">
@@ -126,24 +130,43 @@ export default function MonthlyReport() {
 
       {errMsg && <div className="text-red-600 text-sm mb-2">錯誤: {errMsg}</div>}
 
-      <TripSection trips={trips} setTrips={setTrips} totals={totals} onExport={doExportTrip} />
+      <TripSection trips={trips} setTrips={setTrips} setOts={setOts} totals={totals} onExport={doExportTrip} />
       <OtSection ots={ots} setOts={setOts} totals={totals} onExport={doExportOt} />
     </div>
   )
 }
 
 /* ========== 公差單編輯 ========== */
-function TripSection({ trips, setTrips, totals, onExport }) {
+function TripSection({ trips, setTrips, setOts, totals, onExport }) {
+  // 公差列的加班列重產: 拿掉 _src 對應的舊列, 依新時間重產, 重算受影響日期的級距
+  function syncOts(oldTrip, newTrip) {
+    setOts((prev) => {
+      const kept = prev.filter((o) => o._src !== oldTrip._id)
+      const added = newTrip ? overtimeRowsForTrip(newTrip) : []
+      const dates = [oldTrip.log_date, newTrip?.log_date].filter(Boolean)
+      return allocateBreakdowns(sortOts([...kept, ...added]), dates)
+    })
+  }
+  // 改日期/起訖 → 時數、誤餐、加班表一起重算
   function upd(i, field, value) {
-    setTrips((prev) => prev.map((t, idx) => (idx === i ? { ...t, [field]: value } : t)))
+    const old = trips[i]
+    let row = { ...old, [field]: value }
+    const timeField = ['log_date', 'start_hhmm', 'end_hhmm'].includes(field)
+    if (timeField) row = recalcTrip(row)
+    setTrips((prev) => prev.map((t, idx) => (idx === i ? row : t)))
+    if (timeField) syncOts(old, row)
   }
   function addRow() {
-    setTrips((prev) => [...prev, {
-      log_date: '', roc_year: '', start_hhmm: '09:00', end_hhmm: '17:30',
-      hours: 8.5, remark: '', meal_fee: 0, meal_tags: [],
-    }])
+    setTrips((prev) => [...prev, recalcTrip({
+      _id: `m${Date.now()}`, log_date: '', start_hhmm: '08:30', end_hhmm: '17:30',
+      remark: '', project: '',
+    })])
   }
-  function delRow(i) { setTrips((prev) => prev.filter((_, idx) => idx !== i)) }
+  function delRow(i) {
+    const old = trips[i]
+    setTrips((prev) => prev.filter((_, idx) => idx !== i))
+    syncOts(old, null)
+  }
 
   return (
     <section className="mb-6">
