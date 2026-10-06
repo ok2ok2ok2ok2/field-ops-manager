@@ -1,9 +1,10 @@
 /**
  * 月報表 — 從 daily_logs 拆成公差單 + 加班表, 可編輯 + 匯出 xlsx
- * 版本: v0.2.0
- * 日期: 2026-07-09
+ * 版本: v0.3.0
+ * 日期: 2026-10-06
  * 檔案: src/pages/MonthlyReport.jsx
  *
+ * v0.3.0: 加班表改起訖/日期/時數會自動重算; 級距按同一天累計 (上班日超過 2h 進 2+, 周六同理)
  * v0.2.0: 可編輯 (inline input, 加/刪列) + 匯出 xlsx (以範本為骨架)
  * v0.1.0: read-only 預覽
  */
@@ -11,7 +12,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getLogsByMonth } from '../api/dailyLogs'
 import { getWorkItemsByLogIds } from '../api/workItems'
-import { buildReport, RULES } from '../lib/monthlyReport'
+import { buildReport, RULES, allocateBreakdowns, hoursBetween } from '../lib/monthlyReport'
 import { exportBusinessTrip, exportOvertime } from '../lib/monthlyReportExport'
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
@@ -95,7 +96,7 @@ export default function MonthlyReport() {
     <div className="p-4 max-w-6xl mx-auto">
       <div className="flex items-baseline gap-2 mb-3">
         <h1 className="text-xl font-bold">月報表匯出</h1>
-        <span className="text-xs text-gray-500">v0.2.0 · 可編輯 + 匯出 xlsx</span>
+        <span className="text-xs text-gray-500">v0.3.0 · 可編輯 + 匯出 xlsx</span>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 bg-white rounded shadow-sm p-3 mb-4">
@@ -193,8 +194,18 @@ function TripSection({ trips, setTrips, totals, onExport }) {
 
 /* ========== 加班表編輯 ========== */
 function OtSection({ ots, setOts, totals, onExport }) {
+  // 改日期/起訖/時數 → 自動重算時數與當天級距; 只重算受影響的日期, 其他天的手動修改保留
   function upd(i, field, value) {
-    setOts((prev) => prev.map((o, idx) => (idx === i ? { ...o, [field]: value } : o)))
+    setOts((prev) => {
+      const old = prev[i]
+      let row = { ...old, [field]: value }
+      if (field === 'start_hhmm' || field === 'end_hhmm') {
+        row.hours = hoursBetween(row.start_hhmm, row.end_hhmm)
+      }
+      const next = prev.map((o, idx) => (idx === i ? row : o))
+      if (!['log_date', 'start_hhmm', 'end_hhmm', 'hours'].includes(field)) return next
+      return allocateBreakdowns(next, [old.log_date, row.log_date].filter(Boolean))
+    })
   }
   function updBreakdown(i, colKey, value) {
     setOts((prev) => prev.map((o, idx) => {
@@ -212,10 +223,16 @@ function OtSection({ ots, setOts, totals, onExport }) {
   function addRow() {
     setOts((prev) => [...prev, {
       log_date: '', start_hhmm: '17:30', end_hhmm: '19:00',
-      hours: 1.5, remark: '', project: '', breakdown: [{ column: 'weekday_2', hours: 1.5 }],
+      hours: 1.5, remark: '', project: '', breakdown: [],
     }])
   }
-  function delRow(i) { setOts((prev) => prev.filter((_, idx) => idx !== i)) }
+  function delRow(i) {
+    setOts((prev) => {
+      const date = prev[i]?.log_date
+      const next = prev.filter((_, idx) => idx !== i)
+      return date ? allocateBreakdowns(next, [date]) : next
+    })
+  }
 
   return (
     <section>

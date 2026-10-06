@@ -1,10 +1,13 @@
 /**
  * 月報表拆解 — 把 daily_logs 拆成公差單 + 加班表兩份資料
- * 版本: v0.1.0
- * 日期: 2026-07-08
+ * 版本: v0.2.0
+ * 日期: 2026-10-06
  * 檔案: src/lib/monthlyReport.js
  *
  * 規則常數集中在頂端方便微調。
+ *
+ * v0.2.0: 加班級距改「同一天累計」(早+晚兩段共用前 2 小時額度);
+ *         六日整段外勤都算加班 (原本只算 08:30–17:30 以外, 周六 9–17 會算成 0)
  */
 
 /* ========== 可調規則常數 ========== */
@@ -80,26 +83,60 @@ export function splitOvertime(startHhmm, endHhmm, rules = RULES) {
 
 /* ========== 加班分類 (對應加班表 6 個欄位) ========== */
 // U=上班日前2 / V=上班日2+ / W=周六前2 / X=周六3-8 / Y=周六8+ / Z=周日
-export function classifyOvertime(dateStr, hours) {
+// 級距以「當天累計」計：同一天早上 1.5h + 晚上 1.5h → 前2 = 2、2+ = 1
+const TIERS = {
+  weekday:  [[2, 'weekday_2'], [Infinity, 'weekday_after2']],
+  saturday: [[2, 'sat_2'], [8, 'sat_3to8'], [Infinity, 'sat_8plus']],
+  sunday:   [[Infinity, 'sunday']],
+}
+
+export function isRestDay(dateStr) {
   const dow = weekdayNum(dateStr)
-  if (dow === 0) return [{ column: 'sunday', hours }]
-  if (dow === 6) {
-    const parts = []
-    let remaining = hours
-    const take = (n) => { const t = Math.min(remaining, n); remaining -= t; return t }
-    const h1 = take(2)
-    if (h1 > 0) parts.push({ column: 'sat_2', hours: h1 })
-    const h2 = take(6)
-    if (h2 > 0) parts.push({ column: 'sat_3to8', hours: h2 })
-    if (remaining > 0) parts.push({ column: 'sat_8plus', hours: remaining })
-    return parts
-  }
+  return dow === 0 || dow === 6
+}
+
+/** usedBefore = 當天在這筆之前已累計的加班時數 */
+export function classifyOvertime(dateStr, hours, usedBefore = 0) {
+  if (!dateStr || !(hours > 0)) return []
+  const dow = weekdayNum(dateStr)
+  const tiers = dow === 0 ? TIERS.sunday : dow === 6 ? TIERS.saturday : TIERS.weekday
   const parts = []
+  let pos = usedBefore
   let remaining = hours
-  const h1 = Math.min(remaining, 2); remaining -= h1
-  if (h1 > 0) parts.push({ column: 'weekday_2', hours: h1 })
-  if (remaining > 0) parts.push({ column: 'weekday_after2', hours: remaining })
+  for (const [cap, column] of tiers) {
+    if (remaining <= 0) break
+    const room = cap - pos
+    if (room <= 0) continue
+    const t = Math.round(Math.min(room, remaining) * 100) / 100
+    if (t > 0) parts.push({ column, hours: t })
+    pos += t
+    remaining = Math.round((remaining - t) * 100) / 100
+  }
   return parts
+}
+
+/**
+ * 依「同一天累計」重新分配 breakdown。
+ * onlyDates 給了就只重算那幾天 (保留其他天的手動修改)。回傳新陣列, 不改順序。
+ */
+export function allocateBreakdowns(ots, onlyDates = null) {
+  const byDate = {}
+  ots.forEach((o, idx) => {
+    if (!o.log_date) return
+    if (onlyDates && !onlyDates.includes(o.log_date)) return
+    ;(byDate[o.log_date] ||= []).push(idx)
+  })
+  const next = [...ots]
+  for (const [date, idxs] of Object.entries(byDate)) {
+    idxs.sort((a, b) => (ots[a].start_hhmm || '').localeCompare(ots[b].start_hhmm || ''))
+    let used = 0
+    for (const i of idxs) {
+      const hrs = Number(ots[i].hours) || 0
+      next[i] = { ...ots[i], breakdown: classifyOvertime(date, hrs, used) }
+      used += hrs
+    }
+  }
+  return next
 }
 
 /* ========== 主拆解函數 ========== */
@@ -138,7 +175,10 @@ export function buildReport(logs, rules = RULES) {
       meal_tags: meal.tags,
     })
 
-    const otSegs = splitOvertime(start, end, rules)
+    // 休假日 (六日) 整段外勤都算加班; 上班日只算 08:30–17:30 以外
+    const otSegs = isRestDay(log.log_date)
+      ? [{ start, end, position: 'rest' }]
+      : splitOvertime(start, end, rules)
     for (const seg of otSegs) {
       const hrs = hoursBetween(seg.start, seg.end)
       if (hrs <= 0) continue
@@ -151,10 +191,12 @@ export function buildReport(logs, rules = RULES) {
         position: seg.position,
         remark,
         project: pickProject(log),
-        breakdown: classifyOvertime(log.log_date, hrs),
+        breakdown: [],
       })
     }
   }
+
+  const allocated = allocateBreakdowns(overtimes)
 
   const totals = {
     business_meal_fee: businessTrips.reduce((s, t) => s + t.meal_fee, 0),
@@ -162,7 +204,7 @@ export function buildReport(logs, rules = RULES) {
     overtime_hours: overtimes.reduce((s, t) => s + t.hours, 0),
   }
 
-  return { businessTrips, overtimes, totals }
+  return { businessTrips, overtimes: allocated, totals }
 }
 
 function pickRemark(log) {
