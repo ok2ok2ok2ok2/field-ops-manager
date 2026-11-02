@@ -1,9 +1,11 @@
 /**
  * 工作日誌頁面（瘦身版）
- * 版本: v2.0
- * 日期: 2026-03-27
+ * 版本: v2.2
+ * 日期: 2026-11-02
  * 檔案: src/pages/WorkDashboard.jsx
  *
+ * v2.2：顯示國定假日／補班與公司共用日曆行程，各有開關（每台瀏覽器記住）
+ * v2.1：新增「日」視圖（手機預設），可拍照／選相簿附在當天，並顯示當天維護紀錄照片
  * v2.0：ProjectBar / PendingPanel / ProjectModal / VisibilityModal / WorkItemModal
  *       全部搬到 Layout + WorkContext，本檔只保留日誌區
  *       （WeekView / MonthView / DailyLogModal）
@@ -13,12 +15,13 @@
  * v1.4：boss/admin 檢視模式
  */
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import useSWR from 'swr'
 import toast from 'react-hot-toast'
 import {
   format, startOfMonth, endOfMonth, startOfWeek, endOfWeek,
-  addDays, addMonths, subMonths, addWeeks, subWeeks,
+  addDays, subDays, addMonths, subMonths, addWeeks, subWeeks,
   isSameMonth, isToday,
 } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
@@ -31,6 +34,13 @@ import {
   getWorkItemsByLogIds, getWorkItemsByLog,
   saveWorkItemsForLog,
 } from '../api/workItems'
+import { listDailyPhotos, uploadDailyPhoto, deleteDailyPhoto } from '../api/dailyPhotos'
+import { getMaintenanceRecords } from '../api/maintenanceRecords'
+import { shrinkImage } from '../lib/photoBatch'
+import { getHolidays } from '../lib/twHolidays'
+import { getCompanyEvents, groupEventsByDate } from '../api/companyCalendar'
+import { loadDisplayPrefs, saveDisplayPrefs } from '../lib/displayPrefs'
+import useIsMobile from '../hooks/useIsMobile'
 import { useAuth } from '../contexts/AuthContext'
 import { useWork } from '../contexts/WorkContext'
 
@@ -52,6 +62,8 @@ const WORK_TYPE_BTN = {
   '休假':      { active: 'bg-gray-100 text-gray-600 ring-1 ring-gray-300' },
 }
 
+const EMPTY = {}
+
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 
 // 只有「真的能 hover」的裝置（桌機滑鼠）才啟用 hover 展開/浮動提示框。
@@ -59,6 +71,18 @@ const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 const CAN_HOVER = typeof window !== 'undefined' && window.matchMedia
   ? window.matchMedia('(hover: hover)').matches
   : true
+
+function eventLine(ev) {
+  return `${ev.allDay ? '全天' : ev.startTime} ${ev.summary}${ev.creator ? ` · ${ev.creator}` : ''}`
+}
+
+/** 日期旁的假日／補班小標 */
+function HolidayTag({ info, className = '' }) {
+  if (!info) return null
+  return info.isHoliday
+    ? <span className={`block text-[10px] leading-tight text-red-500 ${className}`}>{info.name}</span>
+    : <span className={`block text-[10px] leading-tight text-amber-600 ${className}`}>補班</span>
+}
 
 function needsFieldInfo(wt) { return wt === '外勤' || wt === '內勤+外勤' }
 
@@ -83,7 +107,8 @@ export default function WorkDashboard() {
     handleToggleTeamMode, refreshWorkData,
   } = useWork()
 
-  const [viewMode, setViewMode] = useState('week')
+  const isMobile = useIsMobile()
+  const [viewMode, setViewMode] = useState(isMobile ? 'day' : 'week')
   const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedDate, setSelectedDate] = useState(null)
 
@@ -96,15 +121,58 @@ export default function WorkDashboard() {
   const weekStartStr = format(weekStart, 'yyyy-MM-dd')
   const weekEndStr = format(weekEnd, 'yyyy-MM-dd')
 
+  const dayStr = format(currentDate, 'yyyy-MM-dd')
+
+  /* ── 假日／公司行程 ── */
+
+  const [prefs, setPrefs] = useState(loadDisplayPrefs)
+  function togglePref(key) {
+    const next = { ...prefs, [key]: !prefs[key] }
+    setPrefs(next)
+    saveDisplayPrefs(next)
+  }
+
+  const rangeStart = viewMode === 'day' ? dayStr
+    : viewMode === 'week' ? weekStartStr
+    : format(startOfWeek(startOfMonth(currentDate), { weekStartsOn: 0 }), 'yyyy-MM-dd')
+  const rangeEnd = viewMode === 'day' ? dayStr
+    : viewMode === 'week' ? weekEndStr
+    : format(endOfWeek(endOfMonth(currentDate), { weekStartsOn: 0 }), 'yyyy-MM-dd')
+  const yStart = Number(rangeStart.slice(0, 4))
+  const yEnd = Number(rangeEnd.slice(0, 4))
+
+  const { data: holidayData } = useSWR(
+    prefs.holidays ? `holidays-${yStart}-${yEnd}` : null,
+    async () => ({ ...(await getHolidays(yStart)), ...(yEnd !== yStart ? await getHolidays(yEnd) : {}) })
+  )
+  const holidays = prefs.holidays && holidayData ? holidayData : EMPTY
+
+  const warnedRef = useRef(false)
+  const { data: companyEvents } = useSWR(
+    prefs.company ? `company-events-${rangeStart}-${rangeEnd}` : null,
+    () => getCompanyEvents(rangeStart, rangeEnd),
+    { onError: (err) => { if (!warnedRef.current) { warnedRef.current = true; console.warn('公司行程載入失敗', err) } } }
+  )
+  const eventsByDate = useMemo(
+    () => (prefs.company && companyEvents ? groupEventsByDate(companyEvents) : EMPTY),
+    [prefs.company, companyEvents]
+  )
+
   const logSwrKey = teamMode
-    ? (viewMode === 'month' ? `logs-team-month-${year}-${month}-${filterUserId}` : `logs-team-week-${weekStartStr}-${filterUserId}`)
-    : (viewMode === 'month' ? `logs-month-${year}-${month}` : `logs-week-${weekStartStr}`)
+    ? (viewMode === 'day' ? `logs-team-day-${dayStr}-${filterUserId}`
+      : viewMode === 'month' ? `logs-team-month-${year}-${month}-${filterUserId}` : `logs-team-week-${weekStartStr}-${filterUserId}`)
+    : (viewMode === 'day' ? `logs-day-${dayStr}`
+      : viewMode === 'month' ? `logs-month-${year}-${month}` : `logs-week-${weekStartStr}`)
 
   const logFetcher = teamMode
-    ? (viewMode === 'month'
+    ? (viewMode === 'day'
+      ? () => getAllUsersLogsByRange(dayStr, dayStr, filterUserId || null)
+      : viewMode === 'month'
       ? () => getAllUsersLogsByMonth(year, month, filterUserId || null)
       : () => getAllUsersLogsByRange(weekStartStr, weekEndStr, filterUserId || null))
-    : (viewMode === 'month'
+    : (viewMode === 'day'
+      ? () => getLogsByRange(dayStr, dayStr)
+      : viewMode === 'month'
       ? () => getLogsByMonth(year, month)
       : () => getLogsByRange(weekStartStr, weekEndStr))
 
@@ -148,8 +216,12 @@ export default function WorkDashboard() {
 
   /* ── handlers ── */
 
-  function handlePrev() { viewMode === 'month' ? setCurrentDate(subMonths(currentDate, 1)) : setCurrentDate(subWeeks(currentDate, 1)) }
-  function handleNext() { viewMode === 'month' ? setCurrentDate(addMonths(currentDate, 1)) : setCurrentDate(addWeeks(currentDate, 1)) }
+  function handlePrev() {
+    setCurrentDate(viewMode === 'day' ? subDays(currentDate, 1) : viewMode === 'month' ? subMonths(currentDate, 1) : subWeeks(currentDate, 1))
+  }
+  function handleNext() {
+    setCurrentDate(viewMode === 'day' ? addDays(currentDate, 1) : viewMode === 'month' ? addMonths(currentDate, 1) : addWeeks(currentDate, 1))
+  }
   function handleToday() { setCurrentDate(new Date()) }
 
   function handleDailyModalClose() {
@@ -158,7 +230,9 @@ export default function WorkDashboard() {
     refreshWorkData()   // ★ 同步 refresh Context 裡的 workItems
   }
 
-  const titleText = viewMode === 'month'
+  const titleText = viewMode === 'day'
+    ? format(currentDate, 'M/d（EEEE）', { locale: zhTW })
+    : viewMode === 'month'
     ? format(currentDate, 'yyyy 年 M 月', { locale: zhTW })
     : `${format(weekStart, 'M/d', { locale: zhTW })} — ${format(weekEnd, 'M/d', { locale: zhTW })}`
 
@@ -166,7 +240,7 @@ export default function WorkDashboard() {
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-auto p-5">
         {/* 標題列 + 控制列 */}
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
           <div>
             <h2 className="text-lg font-bold text-gray-800">
               工作日誌
@@ -180,7 +254,7 @@ export default function WorkDashboard() {
               )}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
 
             {canViewAll && (
               <>
@@ -203,7 +277,21 @@ export default function WorkDashboard() {
               </>
             )}
 
+            <button onClick={() => togglePref('holidays')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                prefs.holidays ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-300' : 'bg-gray-100 text-gray-400'
+              }`}
+            >🎌 假日</button>
+            <button onClick={() => togglePref('company')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                prefs.company ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-300' : 'bg-gray-100 text-gray-400'
+              }`}
+            >📅 公司行程</button>
+
             <div className="flex bg-gray-100 rounded-lg p-0.5">
+              <button onClick={() => setViewMode('day')}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${viewMode === 'day' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >日</button>
               <button onClick={() => setViewMode('week')}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${viewMode === 'week' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >週</button>
@@ -220,15 +308,23 @@ export default function WorkDashboard() {
         {/* 日誌視圖 */}
         {logsLoading ? (
           <div className="flex items-center justify-center py-20"><p className="text-gray-400">載入中...</p></div>
+        ) : viewMode === 'day' ? (
+          <DayView date={currentDate} dayLogs={logMap[dayStr] || []} workItemsMap={filteredWorkItemsMap}
+            onOpen={() => { if (!isReadOnly) setSelectedDate(currentDate) }}
+            teamMode={teamMode} userNameMap={userNameMap} isReadOnly={isReadOnly} myId={user?.id}
+            holidays={holidays} eventsByDate={eventsByDate}
+          />
         ) : viewMode === 'week' ? (
           <WeekView weekStart={weekStart} logMap={logMap} workItemsMap={filteredWorkItemsMap}
             onDateClick={(d) => { if (!isReadOnly) setSelectedDate(d) }}
             teamMode={teamMode} userNameMap={userNameMap}
+            holidays={holidays} eventsByDate={eventsByDate}
           />
         ) : (
           <MonthView currentMonth={currentDate} logMap={logMap} workItemsMap={filteredWorkItemsMap}
             onDateClick={(d) => { if (!isReadOnly) setSelectedDate(d) }}
             teamMode={teamMode} userNameMap={userNameMap}
+            holidays={holidays} eventsByDate={eventsByDate}
           />
         )}
       </div>
@@ -247,10 +343,201 @@ export default function WorkDashboard() {
 }
 
 /* ================================================================
+   DayView — 單日視圖（手機預設）：日誌 + 照片 + 當天維護紀錄
+   ================================================================ */
+
+function DayView({ date, dayLogs, workItemsMap, onOpen, teamMode, userNameMap, isReadOnly, myId, holidays, eventsByDate }) {
+  const dateStr = format(date, 'yyyy-MM-dd')
+  const navigate = useNavigate()
+  const { data: records } = useSWR('maintenance-records', () => getMaintenanceRecords())
+  const dayRecords = (records || []).filter((r) => r.maintenance_date === dateStr)
+
+  const hol = holidays[dateStr]
+  const dayEvents = eventsByDate[dateStr] || []
+
+  const photoUserIds = teamMode
+    ? [...new Set(dayLogs.map((l) => l.user_id))]
+    : [myId]
+
+  return (
+    <div className="space-y-4 max-w-2xl mx-auto">
+      {hol && (
+        <div className={`rounded-lg px-3 py-2 text-sm font-medium ${hol.isHoliday ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>
+          {hol.isHoliday ? `🎌 ${hol.name}` : '補班日'}
+        </div>
+      )}
+
+      {dayEvents.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 className="text-sm font-bold text-gray-700 mb-3">📅 公司行程</h3>
+          <div className="space-y-2">
+            {dayEvents.map((ev) => (
+              <div key={ev.id} className="border-l-4 border-emerald-400 pl-3 text-sm">
+                <p className="text-gray-500 text-xs">
+                  {ev.allDay ? '全天' : `${ev.startTime}–${ev.endTime}`}{ev.creator ? ` · ${ev.creator}` : ''}
+                </p>
+                <p className="text-gray-800 font-medium">{ev.summary}</p>
+                {ev.location && (
+                  <p className="text-xs text-gray-500">
+                    📍 {ev.location}
+                    <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(ev.location)}`}
+                      target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
+                      className="ml-2 text-blue-600 underline">導航</a>
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 日誌 */}
+      {dayLogs.length === 0 ? (
+        !isReadOnly && (
+          <button onClick={onOpen}
+            className="w-full bg-white rounded-xl border-2 border-dashed border-gray-300 py-8 text-base text-blue-600 font-medium hover:bg-blue-50 transition-colors">
+            ＋ {isToday(date) ? '寫今天的日誌' : '寫這天的日誌'}
+          </button>
+        )
+      ) : (
+        dayLogs.map((log) => (
+          <div key={log.id} onClick={onOpen}
+            className={`bg-white rounded-xl border border-gray-200 p-4 text-base ${isReadOnly ? '' : 'cursor-pointer hover:bg-blue-50/30'}`}>
+            <WeekDayLogBlock log={log} items={workItemsMap[log.id] || []}
+              isHovered={false} teamMode={teamMode} userNameMap={userNameMap} />
+          </div>
+        ))
+      )}
+
+      {/* 日誌照片 */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <h3 className="text-sm font-bold text-gray-700 mb-3">日誌照片</h3>
+        <div className="space-y-4">
+          {photoUserIds.map((uid) => (
+            <DayPhotos key={uid} userId={uid} dateStr={dateStr} isOwn={uid === myId}
+              label={teamMode ? (userNameMap[uid] || '?') : null} isReadOnly={isReadOnly} />
+          ))}
+        </div>
+      </div>
+
+      {/* 當天維護紀錄 */}
+      {dayRecords.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 className="text-sm font-bold text-gray-700 mb-3">當天維護紀錄</h3>
+          <div className="space-y-3">
+            {dayRecords.map((rec) => {
+              const adhoc = rec.type === '機動'
+              const thumbs = Object.values(rec.photos || {}).filter((p) => p?.url)
+              return (
+                <div key={rec.id}
+                  onClick={() => navigate(`${adhoc ? '/maintenance-adhoc' : '/maintenance'}?search=${encodeURIComponent(rec.station_name)}`)}
+                  className="cursor-pointer rounded-lg border border-gray-100 p-3 hover:bg-gray-50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-base font-medium text-gray-800">{rec.station_name}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${adhoc ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
+                      {adhoc ? '機動' : '定期'}
+                    </span>
+                  </div>
+                  {thumbs.length > 0 && (
+                    <div className="flex gap-2 overflow-x-auto items-center">
+                      {thumbs.slice(0, 6).map((p, i) => (
+                        <img key={i} src={p.url} alt="" loading="lazy" className="h-16 w-20 object-cover rounded flex-shrink-0" />
+                      ))}
+                      {thumbs.length > 6 && <span className="text-sm text-gray-400 flex-shrink-0">+{thumbs.length - 6}</span>}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 某人某天的照片格（自己的可拍照/選相簿/刪除） */
+function DayPhotos({ userId, dateStr, isOwn, label, isReadOnly }) {
+  const { data: photos, mutate } = useSWR(`daily-photos-${userId}-${dateStr}`, () => listDailyPhotos(userId, dateStr))
+  const [progress, setProgress] = useState(null)
+  const [viewUrl, setViewUrl] = useState(null)
+  const camRef = useRef(null)
+  const galRef = useRef(null)
+
+  async function handleFiles(e) {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    let ok = 0
+    let lastErr = null
+    for (let i = 0; i < files.length; i++) {
+      setProgress(`${i + 1}/${files.length}`)
+      try {
+        const small = await shrinkImage(files[i])
+        await uploadDailyPhoto(small, userId, dateStr)
+        await mutate()
+        ok++
+      } catch (err) {
+        lastErr = err
+      }
+    }
+    setProgress(null)
+    if (ok > 0) toast.success(`已上傳 ${ok} 張`)
+    if (lastErr) toast.error(`${files.length - ok} 張上傳失敗：${lastErr.message}`)
+  }
+
+  async function handleDelete(path) {
+    if (!window.confirm('刪除這張照片？')) return
+    try { await deleteDailyPhoto(path); await mutate() }
+    catch (err) { toast.error('刪除失敗：' + err.message) }
+  }
+
+  return (
+    <div>
+      {label && <p className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 font-medium inline-block mb-2">{label}</p>}
+      {(photos || []).length === 0 ? (
+        <p className="text-sm text-gray-300 mb-2">尚無照片</p>
+      ) : (
+        <div className="grid grid-cols-3 gap-2 mb-2">
+          {photos.map((p) => (
+            <div key={p.path} className="relative aspect-square">
+              <img src={p.url} alt="" loading="lazy" onClick={() => setViewUrl(p.url)}
+                className="w-full h-full object-cover rounded-lg cursor-pointer" />
+              {isOwn && !isReadOnly && (
+                <button onClick={() => handleDelete(p.path)}
+                  className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 text-white text-xs flex items-center justify-center">✕</button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {isOwn && !isReadOnly && (
+        <div className="flex gap-2">
+          <input ref={camRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFiles} />
+          <input ref={galRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
+          <button onClick={() => camRef.current?.click()} disabled={!!progress}
+            className="flex-1 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">📷 拍照</button>
+          <button onClick={() => galRef.current?.click()} disabled={!!progress}
+            className="flex-1 py-2.5 rounded-lg bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200 disabled:opacity-50">🖼 從相簿選</button>
+        </div>
+      )}
+      {progress && <p className="text-sm text-blue-500 mt-2">上傳中 {progress}</p>}
+
+      {viewUrl && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center" onClick={() => setViewUrl(null)}>
+          <img src={viewUrl} alt="" className="max-w-full max-h-full object-contain" />
+          <button className="absolute top-4 right-4 text-white text-2xl">✕</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ================================================================
    WeekView — 週視圖（保持不變）
    ================================================================ */
 
-function WeekView({ weekStart, logMap, workItemsMap, onDateClick, teamMode, userNameMap }) {
+function WeekView({ weekStart, logMap, workItemsMap, onDateClick, teamMode, userNameMap, holidays, eventsByDate }) {
   const [hoveredIdx, setHoveredIdx] = useState(null)
   const [hoveredLogId, setHoveredLogId] = useState(null)
   const days = []
@@ -263,7 +550,9 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick, teamMode, user
         const dayLogs = logMap[dateStr] || []
         const today = isToday(d)
         const dayOfWeek = d.getDay()
-        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
+        const hol = holidays[dateStr]
+        const dayEvents = eventsByDate[dateStr] || []
+        const isWeekend = hol ? hol.isHoliday : (dayOfWeek === 0 || dayOfWeek === 6)
         const hasData = dayLogs.length > 0
         const isHovered = hoveredIdx === idx
 
@@ -296,9 +585,18 @@ function WeekView({ weekStart, logMap, workItemsMap, onDateClick, teamMode, user
                 <span className={`text-gray-300 transition-all duration-200 ${isHovered ? 'text-sm' : 'text-xs'}`}>
                   {format(d, 'M月')}
                 </span>
+                <HolidayTag info={hol} className="mt-0.5 text-center" />
               </div>
 
               <div className="flex-1 p-3">
+                {dayEvents.length > 0 && (
+                  <div className="mb-2 space-y-0.5">
+                    {dayEvents.slice(0, 3).map((ev) => (
+                      <p key={ev.id} className="text-xs text-gray-600 border-l-2 border-emerald-400 pl-1.5 truncate">{eventLine(ev)}</p>
+                    ))}
+                    {dayEvents.length > 3 && <p className="text-xs text-gray-400 pl-2">+{dayEvents.length - 3}</p>}
+                  </div>
+                )}
                 {!hasData ? (
                   <p className={`text-gray-300 pt-1 transition-all duration-200 ${isHovered ? 'text-sm' : 'text-xs'}`}>
                     {teamMode ? '' : '點擊新增日誌'}
@@ -431,7 +729,7 @@ function WeekDayLogBlock({ log, items, isHovered, teamMode, userNameMap, onHover
    MonthView — 月視圖（保持不變）
    ================================================================ */
 
-function MonthView({ currentMonth, logMap, workItemsMap, onDateClick, teamMode, userNameMap }) {
+function MonthView({ currentMonth, logMap, workItemsMap, onDateClick, teamMode, userNameMap, holidays, eventsByDate }) {
   const [hoveredDateStr, setHoveredDateStr] = useState(null)
   const monthStart = startOfMonth(currentMonth)
   const monthEnd = endOfMonth(currentMonth)
@@ -455,7 +753,9 @@ function MonthView({ currentMonth, logMap, workItemsMap, onDateClick, teamMode, 
           const inMonth = isSameMonth(d, currentMonth)
           const today = isToday(d)
           const dayOfWeek = d.getDay()
-          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
+          const hol = holidays[dateStr]
+          const dayEvents = eventsByDate[dateStr] || []
+          const isWeekend = hol ? hol.isHoliday : (dayOfWeek === 0 || dayOfWeek === 6)
           const hasData = dayLogs.length > 0 && inMonth
           const isHovered = hoveredDateStr === dateStr
 
@@ -469,6 +769,12 @@ function MonthView({ currentMonth, logMap, workItemsMap, onDateClick, teamMode, 
               <span className={`text-sm font-medium w-7 h-7 flex items-center justify-center rounded-full ${
                 today ? 'bg-blue-600 text-white' : !inMonth ? 'text-gray-300' : isWeekend ? 'text-red-400' : 'text-gray-700'
               }`}>{format(d, 'd')}</span>
+              <HolidayTag info={hol} />
+
+              {dayEvents.slice(0, 2).map((ev) => (
+                <p key={ev.id} className="text-[10px] leading-tight text-emerald-700 border-l-2 border-emerald-400 pl-1 mt-0.5 truncate">{ev.summary}</p>
+              ))}
+              {dayEvents.length > 2 && <p className="text-[10px] text-gray-400">+{dayEvents.length - 2}</p>}
 
               {hasData && dayLogs.map((log) => {
                 const items = workItemsMap[log.id] || []

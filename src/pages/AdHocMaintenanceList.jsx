@@ -1,11 +1,13 @@
 /**
  * 機動維護頁面 — 自訂照片格的維護表
- * 版本: v1.0
- * 日期: 2026-06-26
+ * 版本: v1.1
+ * 日期: 2026-11-02
  * 檔案: src/pages/AdHocMaintenanceList.jsx
  *
  * 與 MaintenanceList 共用 maintenance_records 表 (type='機動')
  * 照片區改為使用者自訂的 EditableSlotGrid (含 photo_slots jsonb 欄位)
+ *
+ * v1.1 變更：1) 批次上傳照片(不夠格自動加格) 2) 沿用上次(狀態檢查+簽名) 3) 全部填正常 4) 記住輸出設定
  */
 
 import { useState, useEffect, useRef } from 'react'
@@ -22,6 +24,8 @@ import ImageCropper from '../components/ImageCropper'
 import AdHocMaintenanceReport from '../components/AdHocMaintenanceReport'
 import EditableSlotGrid from '../components/EditableSlotGrid'
 import { exportMaintenance } from '../utils/exportMaintenance'
+import { assignFilesToSlots, shrinkImage } from '../lib/photoBatch'
+import { loadExportPrefs, saveExportPrefs } from '../lib/exportPrefs'
 
 const STATUS_FIELDS = [
   { key: 'environment',      label: '環境狀態' },
@@ -140,7 +144,7 @@ export default function AdHocMaintenanceList() {
       </div>
 
       {showModal && (
-        <AdHocMaintenanceModal record={editingRecord} onClose={handleClose} />
+        <AdHocMaintenanceModal record={editingRecord} allRecords={records} onClose={handleClose} />
       )}
 
       {showExportDialog && exportingRecord && (
@@ -153,8 +157,8 @@ export default function AdHocMaintenanceList() {
 /* ── 匯出對話框 (與定期版相同,但用 AdHocMaintenanceReport) ── */
 
 function ExportDialog({ record, onClose }) {
-  const [exportFormat, setExportFormat] = useState('pdf')
-  const [dpi, setDpi] = useState(150)
+  const [exportFormat, setExportFormat] = useState(() => loadExportPrefs().format)
+  const [dpi, setDpi] = useState(() => loadExportPrefs().dpi)
   const [exporting, setExporting] = useState(false)
   const reportRef = useRef(null)
 
@@ -164,6 +168,7 @@ function ExportDialog({ record, onClose }) {
     try {
       const fileName = `機動維護_${record.station_name || '未命名'}_${record.maintenance_date || ''}`
       await exportMaintenance(reportRef.current, { format: exportFormat, dpi, fileName })
+      saveExportPrefs({ format: exportFormat, dpi })
       toast.success('輸出完成')
       onClose()
     } catch (err) {
@@ -233,7 +238,7 @@ function ExportDialog({ record, onClose }) {
 
 /* ── 新增/編輯 Modal ── */
 
-function AdHocMaintenanceModal({ record, onClose }) {
+function AdHocMaintenanceModal({ record, allRecords, onClose }) {
   const isEdit = !!record
 
   const [form, setForm] = useState({
@@ -248,6 +253,8 @@ function AdHocMaintenanceModal({ record, onClose }) {
   })
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(null)
+  const [batchProgress, setBatchProgress] = useState(null)
+  const batchRef = useRef(null)
   const [cropFile, setCropFile] = useState(null)
   const [cropSlotKey, setCropSlotKey] = useState(null)
 
@@ -280,6 +287,38 @@ function AdHocMaintenanceModal({ record, onClose }) {
   }, [isEdit, record])
 
   function handleChange(f, v) { setForm((prev) => ({ ...prev, [f]: v })) }
+
+  // 沿用上次：同站最近一筆，沒有就取該類型最近一筆
+  const [reused, setReused] = useState(false)
+  let prev = null
+  if (!isEdit) {
+    const sameType = (allRecords || [])
+      .filter((r) => r.type === '機動')
+      .sort((a, b) =>
+        (b.maintenance_date || '').localeCompare(a.maintenance_date || '') ||
+        (b.created_at || '').localeCompare(a.created_at || ''))
+    const name = form.station_name.trim()
+    prev = (name && sameType.find((r) => (r.station_name || '').trim() === name)) || sameType[0] || null
+  }
+
+  function handleReuse() {
+    setForm((p) => ({
+      ...p,
+      status_fields: { ...prev.status_fields },
+      technician_img: prev.technician_img ? { ...prev.technician_img, shared: true } : p.technician_img,
+      supervisor_img: prev.supervisor_img ? { ...prev.supervisor_img, shared: true } : p.supervisor_img,
+    }))
+    setReused(true)
+    toast.success('已沿用')
+  }
+
+  function handleAllNormal() {
+    setForm((p) => {
+      const sf = { ...p.status_fields }
+      STATUS_FIELDS.forEach(({ key }) => { if (!(sf[key] || '').trim()) sf[key] = '正常' })
+      return { ...p, status_fields: sf }
+    })
+  }
 
   function handleStatusChange(key, value) {
     setForm((prev) => ({
@@ -340,12 +379,53 @@ function AdHocMaintenanceModal({ record, onClose }) {
     const img = form[`${role}_img`]
     if (!img?.url) return
     try {
-      await deleteMaintenancePhoto(img.url)
+      if (!img.shared) await deleteMaintenancePhoto(img.url)
       setForm((prev) => ({ ...prev, [`${role}_img`]: null }))
       toast.success('簽名已移除')
     } catch (err) {
       toast.error('移除失敗：' + err.message)
     }
+  }
+
+
+  // 批次上傳：依檔案修改時間填入空格，循序縮圖+上傳
+  async function handleBatchSelect(fileList) {
+    const files = Array.from(fileList || [])
+    if (files.length === 0) return
+    const empty = form.photo_slots.filter((s) => !form.photos[s.id]?.url).length
+    let slots = form.photo_slots
+    if (files.length > empty) {
+      const extra = Array.from({ length: files.length - empty }, () => (
+        { id: crypto.randomUUID(), label: '未命名', cols: 1, height: 180 }
+      ))
+      slots = [...slots, ...extra]
+      setForm((prev) => ({ ...prev, photo_slots: [...prev.photo_slots, ...extra] }))
+    }
+    const { pairs, overflow } = assignFilesToSlots(files, slots.map((s) => s.id), form.photos)
+    if (pairs.length === 0) { toast('沒有空格可放照片'); return }
+    if (overflow.length > 0) toast(`空格不夠，${overflow.length} 張未放入`)
+    let done = 0
+    let failed = 0
+    setBatchProgress({ done, total: pairs.length })
+    for (const [key, file] of pairs) {
+      setUploading(key)
+      try {
+        const shrunk = await shrinkImage(file)
+        const result = await uploadMaintenancePhoto(shrunk, isEdit ? record.id : 'temp')
+        setForm((prev) => ({
+          ...prev,
+          photos: { ...prev.photos, [key]: { url: result.url, name: result.name } },
+        }))
+      } catch {
+        failed++
+      }
+      done++
+      setBatchProgress({ done, total: pairs.length })
+    }
+    setUploading(null)
+    setBatchProgress(null)
+    if (failed > 0) toast.error(`${failed} 張上傳失敗`)
+    if (pairs.length - failed > 0) toast.success(`已上傳 ${pairs.length - failed} 張`)
   }
 
   async function handlePhotoRemove(slotId) {
@@ -430,6 +510,15 @@ function AdHocMaintenanceModal({ record, onClose }) {
               </div>
             </div>
 
+            {/* 沿用上次 */}
+            {prev && !reused && (
+              <div className="flex items-center justify-between bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                <span className="text-xs text-gray-600">沿用 {prev.station_name} {toROCDate(prev.maintenance_date)} 的狀態檢查與簽名</span>
+                <button type="button" onClick={handleReuse}
+                  className="text-xs text-blue-600 hover:text-blue-700 transition-colors">沿用</button>
+              </div>
+            )}
+
             {/* 簽名 */}
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -454,7 +543,11 @@ function AdHocMaintenanceModal({ record, onClose }) {
 
             {/* 狀態欄位 */}
             <div>
-              <h4 className="text-sm font-bold text-gray-700 mb-3 pb-2 border-b border-gray-100">狀態檢查</h4>
+              <h4 className="text-sm font-bold text-gray-700 mb-3 pb-2 border-b border-gray-100">
+                狀態檢查
+                <button type="button" onClick={handleAllNormal}
+                  className="float-right text-xs font-normal text-blue-600 hover:text-blue-700 transition-colors">全部填正常</button>
+              </h4>
               <div className="grid grid-cols-4 gap-3">
                 {STATUS_FIELDS.map((sf) => (
                   <div key={sf.key}>
@@ -474,6 +567,17 @@ function AdHocMaintenanceModal({ record, onClose }) {
                 現場照片
                 <span className="text-xs text-gray-400 font-normal ml-2">
                   （{Object.values(form.photos).filter((p) => p && p.url).length}/{form.photo_slots.length}）
+                </span>
+                <span className="float-right font-normal">
+                  {batchProgress && (
+                    <span className="text-xs text-blue-500 mr-2">上傳中 {batchProgress.done}/{batchProgress.total}</span>
+                  )}
+                  <button type="button" disabled={!!batchProgress}
+                    onClick={() => batchRef.current?.click()}
+                    className="text-xs text-blue-600 hover:text-blue-700 disabled:opacity-50 transition-colors"
+                  >📷 一次選多張</button>
+                  <input ref={batchRef} type="file" accept="image/*" multiple className="hidden"
+                    onChange={(e) => { handleBatchSelect(e.target.files); e.target.value = '' }} />
                 </span>
               </h4>
               <EditableSlotGrid

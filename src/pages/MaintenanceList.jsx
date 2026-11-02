@@ -1,8 +1,10 @@
 /**
  * 維護記錄頁面 — 地動儀系統現場維護表
- * 版本: v1.7
- * 日期: 2026-06-26
+ * 版本: v1.8
+ * 日期: 2026-11-02
  * 檔案: src/pages/MaintenanceList.jsx
+ *
+ * v1.8 變更：1) 批次上傳照片 2) 沿用上次(狀態檢查+簽名) 3) 全部填正常 4) 記住輸出設定
  *
  * v1.7 變更：
  *  - 「地動儀水平、方位」改為一格內兩張直式照 (level_direction_a / level_direction_b)
@@ -25,6 +27,8 @@ import {
 import ImageCropper from '../components/ImageCropper'
 import MaintenanceReport from '../components/MaintenanceReport'
 import { exportMaintenance } from '../utils/exportMaintenance'
+import { assignFilesToSlots, shrinkImage } from '../lib/photoBatch'
+import { loadExportPrefs, saveExportPrefs } from '../lib/exportPrefs'
 
 /* ========== 常數 ========== */
 
@@ -196,7 +200,7 @@ export default function MaintenanceList() {
 
       {/* 新增/編輯 Modal */}
       {showModal && (
-        <MaintenanceModal record={editingRecord} onClose={handleClose} />
+        <MaintenanceModal record={editingRecord} allRecords={records} onClose={handleClose} />
       )}
 
       {/* 輸出對話框 */}
@@ -212,8 +216,8 @@ export default function MaintenanceList() {
    ================================================================ */
 
 function ExportDialog({ record, onClose }) {
-  const [exportFormat, setExportFormat] = useState('pdf')
-  const [dpi, setDpi] = useState(150)
+  const [exportFormat, setExportFormat] = useState(() => loadExportPrefs().format)
+  const [dpi, setDpi] = useState(() => loadExportPrefs().dpi)
   const [exporting, setExporting] = useState(false)
   const reportRef = useRef(null)
 
@@ -227,6 +231,7 @@ function ExportDialog({ record, onClose }) {
         dpi,
         fileName,
       })
+      saveExportPrefs({ format: exportFormat, dpi })
       toast.success('輸出完成')
       onClose()
     } catch (err) {
@@ -307,7 +312,7 @@ function ExportDialog({ record, onClose }) {
    新增/編輯 Modal
    ================================================================ */
 
-function MaintenanceModal({ record, onClose }) {
+function MaintenanceModal({ record, allRecords, onClose }) {
   const isEdit = !!record
 
   const [form, setForm] = useState({
@@ -321,6 +326,8 @@ function MaintenanceModal({ record, onClose }) {
   })
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(null)
+  const [batchProgress, setBatchProgress] = useState(null)
+  const batchRef = useRef(null)
 
   // 裁切相關
   const [cropFile, setCropFile] = useState(null)       // 待裁切的原始檔案
@@ -345,6 +352,38 @@ function MaintenanceModal({ record, onClose }) {
   }, [isEdit, record])
 
   function handleChange(f, v) { setForm((prev) => ({ ...prev, [f]: v })) }
+
+  // 沿用上次：同站最近一筆，沒有就取該類型最近一筆
+  const [reused, setReused] = useState(false)
+  let prev = null
+  if (!isEdit) {
+    const sameType = (allRecords || [])
+      .filter((r) => r.type !== '機動')
+      .sort((a, b) =>
+        (b.maintenance_date || '').localeCompare(a.maintenance_date || '') ||
+        (b.created_at || '').localeCompare(a.created_at || ''))
+    const name = form.station_name.trim()
+    prev = (name && sameType.find((r) => (r.station_name || '').trim() === name)) || sameType[0] || null
+  }
+
+  function handleReuse() {
+    setForm((p) => ({
+      ...p,
+      status_fields: { ...prev.status_fields },
+      technician_img: prev.technician_img ? { ...prev.technician_img, shared: true } : p.technician_img,
+      supervisor_img: prev.supervisor_img ? { ...prev.supervisor_img, shared: true } : p.supervisor_img,
+    }))
+    setReused(true)
+    toast.success('已沿用')
+  }
+
+  function handleAllNormal() {
+    setForm((p) => {
+      const sf = { ...p.status_fields }
+      STATUS_FIELDS.forEach(({ key }) => { if (!(sf[key] || '').trim()) sf[key] = '正常' })
+      return { ...p, status_fields: sf }
+    })
+  }
 
   function handleStatusChange(key, value) {
     setForm((prev) => ({
@@ -408,12 +447,45 @@ function MaintenanceModal({ record, onClose }) {
     const img = form[`${role}_img`]
     if (!img?.url) return
     try {
-      await deleteMaintenancePhoto(img.url)
+      if (!img.shared) await deleteMaintenancePhoto(img.url)
       setForm((prev) => ({ ...prev, [`${role}_img`]: null }))
       toast.success('簽名已移除')
     } catch (err) {
       toast.error('移除失敗：' + err.message)
     }
+  }
+
+
+  // 批次上傳：依檔案修改時間填入空格，循序縮圖+上傳
+  async function handleBatchSelect(fileList) {
+    const files = Array.from(fileList || [])
+    if (files.length === 0) return
+    const slotKeys = PHOTO_SLOTS.flatMap((s) => (s.multi ? s.subSlots.map((x) => x.key) : [s.key]))
+    const { pairs, overflow } = assignFilesToSlots(files, slotKeys, form.photos)
+    if (pairs.length === 0) { toast('沒有空格可放照片'); return }
+    if (overflow.length > 0) toast(`空格不夠，${overflow.length} 張未放入`)
+    let done = 0
+    let failed = 0
+    setBatchProgress({ done, total: pairs.length })
+    for (const [key, file] of pairs) {
+      setUploading(key)
+      try {
+        const shrunk = await shrinkImage(file)
+        const result = await uploadMaintenancePhoto(shrunk, isEdit ? record.id : 'temp')
+        setForm((prev) => ({
+          ...prev,
+          photos: { ...prev.photos, [key]: { url: result.url, name: result.name } },
+        }))
+      } catch {
+        failed++
+      }
+      done++
+      setBatchProgress({ done, total: pairs.length })
+    }
+    setUploading(null)
+    setBatchProgress(null)
+    if (failed > 0) toast.error(`${failed} 張上傳失敗`)
+    if (pairs.length - failed > 0) toast.success(`已上傳 ${pairs.length - failed} 張`)
   }
 
   // 移除照片
@@ -502,6 +574,15 @@ function MaintenanceModal({ record, onClose }) {
               </div>
             </div>
 
+            {/* 沿用上次 */}
+            {prev && !reused && (
+              <div className="flex items-center justify-between bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                <span className="text-xs text-gray-600">沿用 {prev.station_name} {toROCDate(prev.maintenance_date)} 的狀態檢查與簽名</span>
+                <button type="button" onClick={handleReuse}
+                  className="text-xs text-blue-600 hover:text-blue-700 transition-colors">沿用</button>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-600 mb-1">維護人員簽名</label>
@@ -525,7 +606,11 @@ function MaintenanceModal({ record, onClose }) {
 
             {/* ── 狀態欄位 ── */}
             <div>
-              <h4 className="text-sm font-bold text-gray-700 mb-3 pb-2 border-b border-gray-100">狀態檢查</h4>
+              <h4 className="text-sm font-bold text-gray-700 mb-3 pb-2 border-b border-gray-100">
+                狀態檢查
+                <button type="button" onClick={handleAllNormal}
+                  className="float-right text-xs font-normal text-blue-600 hover:text-blue-700 transition-colors">全部填正常</button>
+              </h4>
               <div className="grid grid-cols-4 gap-3">
                 {STATUS_FIELDS.map((sf) => (
                   <div key={sf.key}>
@@ -545,6 +630,17 @@ function MaintenanceModal({ record, onClose }) {
                 現場照片
                 <span className="text-xs text-gray-400 font-normal ml-2">
                   （{Object.values(form.photos).filter((p) => p && p.url).length}/{TOTAL_PHOTO_COUNT}）
+                </span>
+                <span className="float-right font-normal">
+                  {batchProgress && (
+                    <span className="text-xs text-blue-500 mr-2">上傳中 {batchProgress.done}/{batchProgress.total}</span>
+                  )}
+                  <button type="button" disabled={!!batchProgress}
+                    onClick={() => batchRef.current?.click()}
+                    className="text-xs text-blue-600 hover:text-blue-700 disabled:opacity-50 transition-colors"
+                  >📷 一次選多張</button>
+                  <input ref={batchRef} type="file" accept="image/*" multiple className="hidden"
+                    onChange={(e) => { handleBatchSelect(e.target.files); e.target.value = '' }} />
                 </span>
               </h4>
 

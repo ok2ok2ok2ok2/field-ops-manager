@@ -1,11 +1,13 @@
 /**
  * 月報表拆解 — 把 daily_logs 拆成公差單 + 加班表兩份資料
- * 版本: v0.3.0
- * 日期: 2026-10-06
+ * 版本: v0.4.0
+ * 日期: 2026-11-02
  * 檔案: src/lib/monthlyReport.js
  *
  * 規則常數集中在頂端方便微調。
  *
+ * v0.4.0: 國定假日比照周六級距 (整段算加班); 週末補班日當上班日。
+ *         cal = twHolidays.getHolidays() 的表 { 'YYYY-MM-DD': {name, isHoliday} }, 不給就只看星期
  * v0.3.0: 抽出 recalcTrip / overtimeRowsForTrip, 公差單改時間可連動加班表 (_id / _src 對應)
  * v0.2.0: 加班級距改「同一天累計」(早+晚兩段共用前 2 小時額度);
  *         六日整段外勤都算加班 (原本只算 08:30–17:30 以外, 周六 9–17 會算成 0)
@@ -91,16 +93,25 @@ const TIERS = {
   sunday:   [[Infinity, 'sunday']],
 }
 
-export function isRestDay(dateStr) {
+/** 'weekday' | 'saturday' | 'sunday'。國定假日→saturday (落在周日仍算 sunday), 補班→weekday */
+export function dayKind(dateStr, cal = {}) {
   const dow = weekdayNum(dateStr)
-  return dow === 0 || dow === 6
+  const h = cal?.[dateStr]
+  if (h) {
+    if (!h.isHoliday) return 'weekday'
+    return dow === 0 ? 'sunday' : 'saturday'
+  }
+  return dow === 0 ? 'sunday' : dow === 6 ? 'saturday' : 'weekday'
+}
+
+export function isRestDay(dateStr, cal = {}) {
+  return dayKind(dateStr, cal) !== 'weekday'
 }
 
 /** usedBefore = 當天在這筆之前已累計的加班時數 */
-export function classifyOvertime(dateStr, hours, usedBefore = 0) {
+export function classifyOvertime(dateStr, hours, usedBefore = 0, cal = {}) {
   if (!dateStr || !(hours > 0)) return []
-  const dow = weekdayNum(dateStr)
-  const tiers = dow === 0 ? TIERS.sunday : dow === 6 ? TIERS.saturday : TIERS.weekday
+  const tiers = TIERS[dayKind(dateStr, cal)]
   const parts = []
   let pos = usedBefore
   let remaining = hours
@@ -120,7 +131,7 @@ export function classifyOvertime(dateStr, hours, usedBefore = 0) {
  * 依「同一天累計」重新分配 breakdown。
  * onlyDates 給了就只重算那幾天 (保留其他天的手動修改)。回傳新陣列, 不改順序。
  */
-export function allocateBreakdowns(ots, onlyDates = null) {
+export function allocateBreakdowns(ots, onlyDates = null, cal = {}) {
   const byDate = {}
   ots.forEach((o, idx) => {
     if (!o.log_date) return
@@ -133,7 +144,7 @@ export function allocateBreakdowns(ots, onlyDates = null) {
     let used = 0
     for (const i of idxs) {
       const hrs = Number(ots[i].hours) || 0
-      next[i] = { ...ots[i], breakdown: classifyOvertime(date, hrs, used) }
+      next[i] = { ...ots[i], breakdown: classifyOvertime(date, hrs, used, cal) }
       used += hrs
     }
   }
@@ -154,11 +165,11 @@ export function recalcTrip(trip, rules = RULES) {
 }
 
 /** 一筆公差產生的加班列 (breakdown 留空, 由 allocateBreakdowns 依當天累計分配) */
-export function overtimeRowsForTrip(trip, rules = RULES) {
+export function overtimeRowsForTrip(trip, rules = RULES, cal = {}) {
   const { log_date, start_hhmm: start, end_hhmm: end } = trip
   if (!log_date || !start || !end) return []
-  // 休假日 (六日) 整段外勤都算加班, 不扣午休; 上班日只算 08:30–17:30 以外
-  const segs = isRestDay(log_date)
+  // 休假日 (六日、國定假日) 整段外勤都算加班, 不扣午休; 上班日 (含補班) 只算 08:30–17:30 以外
+  const segs = isRestDay(log_date, cal)
     ? [{ start, end, position: 'rest' }]
     : splitOvertime(start, end, rules)
   return segs
@@ -194,7 +205,7 @@ export function sortOts(ots) {
  * overtimes 每筆:
  *   { log_date, roc_year, start_hhmm, end_hhmm, hours, remark, project, breakdown: [{column, hours}] }
  */
-export function buildReport(logs, rules = RULES) {
+export function buildReport(logs, rules = RULES, cal = {}) {
   const businessTrips = []
   const overtimes = []
 
@@ -222,10 +233,10 @@ export function buildReport(logs, rules = RULES) {
       meal_tags: meal.tags,
     }
     businessTrips.push(trip)
-    overtimes.push(...overtimeRowsForTrip(trip, rules))
+    overtimes.push(...overtimeRowsForTrip(trip, rules, cal))
   }
 
-  const allocated = allocateBreakdowns(overtimes)
+  const allocated = allocateBreakdowns(overtimes, null, cal)
 
   const totals = {
     business_meal_fee: businessTrips.reduce((s, t) => s + t.meal_fee, 0),

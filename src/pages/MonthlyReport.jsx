@@ -1,9 +1,10 @@
 /**
  * 月報表 — 從 daily_logs 拆成公差單 + 加班表, 可編輯 + 匯出 xlsx
- * 版本: v0.4.0
- * 日期: 2026-10-06
+ * 版本: v0.5.0
+ * 日期: 2026-11-02
  * 檔案: src/pages/MonthlyReport.jsx
  *
+ * v0.5.0: 載入時抓國定假日表, 假日比照周六級距、補班當上班日; 加班表日期旁標假日名
  * v0.4.0: 公差單改日期/起訖 → 時數、誤餐、加班表連動; 刪公差列一併刪其加班列
  * v0.3.0: 加班表改起訖/日期/時數會自動重算; 級距按同一天累計 (上班日超過 2h 進 2+, 周六同理)
  * v0.2.0: 可編輯 (inline input, 加/刪列) + 匯出 xlsx (以範本為骨架)
@@ -16,6 +17,7 @@ import { getWorkItemsByLogIds } from '../api/workItems'
 import {
   buildReport, RULES, allocateBreakdowns, hoursBetween, recalcTrip, overtimeRowsForTrip, sortOts,
 } from '../lib/monthlyReport'
+import { getHolidays } from '../lib/twHolidays'
 import { exportBusinessTrip, exportOvertime } from '../lib/monthlyReportExport'
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
@@ -40,6 +42,7 @@ export default function MonthlyReport() {
   const [trips, setTrips] = useState([])
   const [ots, setOts] = useState([])
   const [errMsg, setErrMsg] = useState('')
+  const [cal, setCal] = useState({})
 
   useEffect(() => {
     if (profile?.full_name) setApplicant(profile.full_name)
@@ -56,7 +59,7 @@ export default function MonthlyReport() {
     setLoading(true)
     setErrMsg('')
     try {
-      const raw = await getLogsByMonth(year, month)
+      const [raw, hol] = await Promise.all([getLogsByMonth(year, month), getHolidays(year)])
       const items = await getWorkItemsByLogIds(raw.map((l) => l.id))
       const itemMap = {}
       for (const it of items) {
@@ -65,7 +68,8 @@ export default function MonthlyReport() {
         itemMap[k].push(it)
       }
       const enriched = raw.map((l) => ({ ...l, work_items: itemMap[l.id] || [] }))
-      const rep = buildReport(enriched)
+      setCal(hol)
+      const rep = buildReport(enriched, RULES, hol)
       setTrips(rep.businessTrips)
       setOts(rep.overtimes)
     } catch (e) {
@@ -130,21 +134,21 @@ export default function MonthlyReport() {
 
       {errMsg && <div className="text-red-600 text-sm mb-2">錯誤: {errMsg}</div>}
 
-      <TripSection trips={trips} setTrips={setTrips} setOts={setOts} totals={totals} onExport={doExportTrip} />
-      <OtSection ots={ots} setOts={setOts} totals={totals} onExport={doExportOt} />
+      <TripSection trips={trips} setTrips={setTrips} setOts={setOts} cal={cal} totals={totals} onExport={doExportTrip} />
+      <OtSection ots={ots} setOts={setOts} cal={cal} totals={totals} onExport={doExportOt} />
     </div>
   )
 }
 
 /* ========== 公差單編輯 ========== */
-function TripSection({ trips, setTrips, setOts, totals, onExport }) {
+function TripSection({ trips, setTrips, setOts, cal, totals, onExport }) {
   // 公差列的加班列重產: 拿掉 _src 對應的舊列, 依新時間重產, 重算受影響日期的級距
   function syncOts(oldTrip, newTrip) {
     setOts((prev) => {
       const kept = prev.filter((o) => o._src !== oldTrip._id)
-      const added = newTrip ? overtimeRowsForTrip(newTrip) : []
+      const added = newTrip ? overtimeRowsForTrip(newTrip, RULES, cal) : []
       const dates = [oldTrip.log_date, newTrip?.log_date].filter(Boolean)
-      return allocateBreakdowns(sortOts([...kept, ...added]), dates)
+      return allocateBreakdowns(sortOts([...kept, ...added]), dates, cal)
     })
   }
   // 改日期/起訖 → 時數、誤餐、加班表一起重算
@@ -216,7 +220,7 @@ function TripSection({ trips, setTrips, setOts, totals, onExport }) {
 }
 
 /* ========== 加班表編輯 ========== */
-function OtSection({ ots, setOts, totals, onExport }) {
+function OtSection({ ots, setOts, cal, totals, onExport }) {
   // 改日期/起訖/時數 → 自動重算時數與當天級距; 只重算受影響的日期, 其他天的手動修改保留
   function upd(i, field, value) {
     setOts((prev) => {
@@ -227,7 +231,7 @@ function OtSection({ ots, setOts, totals, onExport }) {
       }
       const next = prev.map((o, idx) => (idx === i ? row : o))
       if (!['log_date', 'start_hhmm', 'end_hhmm', 'hours'].includes(field)) return next
-      return allocateBreakdowns(next, [old.log_date, row.log_date].filter(Boolean))
+      return allocateBreakdowns(next, [old.log_date, row.log_date].filter(Boolean), cal)
     })
   }
   function updBreakdown(i, colKey, value) {
@@ -253,7 +257,7 @@ function OtSection({ ots, setOts, totals, onExport }) {
     setOts((prev) => {
       const date = prev[i]?.log_date
       const next = prev.filter((_, idx) => idx !== i)
-      return date ? allocateBreakdowns(next, [date]) : next
+      return date ? allocateBreakdowns(next, [date], cal) : next
     })
   }
 
@@ -288,7 +292,7 @@ function OtSection({ ots, setOts, totals, onExport }) {
             {ots.map((o, i) => (
               <tr key={i} className="border-t">
                 <td className="p-1 text-center text-gray-400">{i + 1}</td>
-                <td className="p-1"><input type="date" value={o.log_date} onChange={(e) => upd(i, 'log_date', e.target.value)} className="w-32 border rounded px-1" /></td>
+                <td className="p-1 whitespace-nowrap"><input type="date" value={o.log_date} onChange={(e) => upd(i, 'log_date', e.target.value)} className="w-32 border rounded px-1" />{cal[o.log_date] && <span className={`ml-1 text-xs ${cal[o.log_date].isHoliday ? 'text-red-600' : 'text-amber-600'}`}>{cal[o.log_date].name}</span>}</td>
                 <td className="p-1"><input type="time" value={o.start_hhmm} onChange={(e) => upd(i, 'start_hhmm', e.target.value)} className="w-24 border rounded px-1" /></td>
                 <td className="p-1"><input type="time" value={o.end_hhmm} onChange={(e) => upd(i, 'end_hhmm', e.target.value)} className="w-24 border rounded px-1" /></td>
                 <td className="p-1"><input type="number" step="0.5" value={o.hours} onChange={(e) => upd(i, 'hours', Number(e.target.value))} className="w-14 border rounded px-1 text-right" /></td>
