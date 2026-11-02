@@ -1,7 +1,7 @@
 /**
  * 公司共用日曆（維興專用）唯讀 API
- * 版本: v1.0
- * 日期: 2026-11-02
+ * 版本: v1.1
+ * 日期: 2026-11-03
  * 檔案: api/calendar.js
  *
  * GET /api/calendar?start=YYYY-MM-DD&end=YYYY-MM-DD （含頭含尾，台北時間，最多 62 天）
@@ -19,6 +19,10 @@
  *   VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY  建置時本來就有
  *
  * ⚠ 絕不回傳信箱：建立者只回暱稱，對不到就回 null。
+ *
+ * v1.1: 建立者規則跟 LINE bot (website-monitor creatorLabel) 一致 —
+ *       暱稱表 → Google 顯示名稱 (含 @ 不用) → 服務帳戶建的標「LINE Bot」;
+ *       原本只看暱稱表, 沒設 CAL_PEOPLE_MAP 時全部空白
  */
 
 import crypto from 'crypto'
@@ -82,11 +86,20 @@ function prevDay(iso) {
   return t.toISOString().slice(0, 10)
 }
 
+function creatorLabel(ev, people) {
+  if (ev.extendedProperties?.private?.source === 'line-bot') return 'LINE Bot'
+  const email = (ev.creator?.email || '').trim().toLowerCase()
+  if (!email) return null
+  if (email.endsWith('.gserviceaccount.com')) return 'LINE Bot'
+  if (people[email]) return people[email]
+  const display = (ev.creator?.displayName || '').trim()
+  return display && !display.includes('@') ? display : null
+}
+
 function mapEvent(ev, people) {
   const allDay = !!ev.start?.date
   const s = ev.start?.dateTime || ev.start?.date || ''
   const e = ev.end?.dateTime || ev.end?.date || s
-  const email = (ev.creator?.email || '').toLowerCase()
   return {
     id: ev.id,
     summary: ev.summary || '（無標題）',
@@ -97,7 +110,7 @@ function mapEvent(ev, people) {
     endDate: allDay ? prevDay(e.slice(0, 10)) : e.slice(0, 10),
     startTime: allDay ? null : s.slice(11, 16),
     endTime: allDay ? null : e.slice(11, 16),
-    creator: people[email] || null,
+    creator: creatorLabel(ev, people),
   }
 }
 
