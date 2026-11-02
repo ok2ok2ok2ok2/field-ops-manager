@@ -1,9 +1,10 @@
 /**
  * 月報表匯出 — 用 ExcelJS 讀範本 xlsx, 填資料, 觸發下載
- * 版本: v0.3.0
- * 日期: 2026-10-06
+ * 版本: v0.4.0
+ * 日期: 2026-11-03
  * 檔案: src/lib/monthlyReportExport.js
  *
+ * v0.4.0: 工作表名稱改成資料月份 (範本寫死「5月」, 匯出 10 月仍叫 5月)〔坑·ok2⁴·2026-11-03〕
  * v0.3.0: 修三個加總錯誤 — 超過範本列數的資料被靜默丟掉 (改為插入列)、
  *         範本自帶的範例資料沒清 (列數少時殘留, 例如 U7=1.5)、範本 U16=SUM(U8:U15) 漏第 7 列;
  *         總計公式依實際列數重寫
@@ -146,6 +147,7 @@ export async function exportBusinessTrip(applicant, trips) {
 
   const y = trips[0]?.log_date?.slice(0, 4) || ''
   const m = Number(trips[0]?.log_date?.slice(5, 7)) || ''
+  if (m) ws.name = `${m}月`
   const name = applicant || '申請人'
   await downloadWorkbook(wb, `${y} ${name}${m}月公差單.xlsx`.trim())
 }
@@ -199,6 +201,7 @@ export async function exportOvertime(applicant, overtimes) {
 
   const y = overtimes[0]?.log_date?.slice(0, 4) || ''
   const m = Number(overtimes[0]?.log_date?.slice(5, 7)) || ''
+  if (m) ws.name = `${m}月`
   const name = applicant || '申請人'
   await downloadWorkbook(wb, `${y} ${name}${m}月加班表.xlsx`.trim())
 }

@@ -1,9 +1,10 @@
 /**
  * 月報表 — 從 daily_logs 拆成公差單 + 加班表, 可編輯 + 匯出 xlsx
- * 版本: v0.5.0
- * 日期: 2026-11-02
+ * 版本: v0.5.1
+ * 日期: 2026-11-03
  * 檔案: src/pages/MonthlyReport.jsx
  *
+ * v0.5.1: 申請人預設改用 profiles.display_name (原本讀不存在的 full_name, 一律掉到信箱前綴)〔坑·ok2⁴·2026-11-03〕
  * v0.5.0: 載入時抓國定假日表, 假日比照周六級距、補班當上班日; 加班表日期旁標假日名
  * v0.4.0: 公差單改日期/起訖 → 時數、誤餐、加班表連動; 刪公差列一併刪其加班列
  * v0.3.0: 加班表改起訖/日期/時數會自動重算; 級距按同一天累計 (上班日超過 2h 進 2+, 周六同理)
@@ -45,7 +46,7 @@ export default function MonthlyReport() {
   const [cal, setCal] = useState({})
 
   useEffect(() => {
-    if (profile?.full_name) setApplicant(profile.full_name)
+    if (profile?.display_name) setApplicant(profile.display_name)
     else if (user?.email) setApplicant(user.email.split('@')[0])
   }, [profile, user])
 
