@@ -1,9 +1,10 @@
 /**
  * 收縮式側邊導航欄
- * 版本: v7.6
- * 日期: 2026-08-24
+ * 版本: v7.7
+ * 日期: 2026-11-04
  * 檔案: src/components/Sidebar.jsx
  *
+ * v7.7：底部加 🔑 變更密碼（原本整個系統沒有改密碼的地方）
  * v7.6：抽屜高度改 h-dvh，底部使用者列不會被手機網址列蓋掉
  * v7.5：hover 改用 pointerType 判斷（觸控筆電也不會卡開）；logo 一律可點擊固定展開
  * v7.4：手機改抽屜 (drawer)，無 hover 裝置改點擊展開 — 修「碰一下就卡開收不回去」
@@ -17,6 +18,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import toast from 'react-hot-toast'
+import PasswordModal from './PasswordModal'
 import useIsMobile from '../hooks/useIsMobile'
 import {
   FIELD_NAV_ITEMS, ADMIN_NAV_ITEMS, MONITOR_NAV_ITEMS, STANDALONE_NAV_ITEMS,
@@ -178,6 +180,7 @@ export default function Sidebar({ mobileOpen = false, onClose }) {
   const [monitorExpanded, setMonitorExpanded] = useState(!initialPrefs.collapsed.monitor)
   const [prefsVer, setPrefsVer] = useState(0)  // 觸發重新讀 prefs
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [pwOpen, setPwOpen] = useState(false)
   const { profile, isAdmin, signOut } = useAuth()
   const navigate = useNavigate()
 
@@ -386,6 +389,14 @@ export default function Sidebar({ mobileOpen = false, onClose }) {
               ⚙
             </button>
             <button
+              onClick={() => setPwOpen(true)}
+              className="flex-shrink-0 text-gray-400 hover:text-white transition-colors text-sm"
+              style={{ opacity: hovered ? 1 : 0 }}
+              title="變更密碼"
+            >
+              🔑
+            </button>
+            <button
               onClick={handleSignOut}
               className="flex-shrink-0 text-gray-400 hover:text-red-400 transition-colors text-sm"
               style={{ opacity: hovered ? 1 : 0 }}
@@ -396,6 +407,8 @@ export default function Sidebar({ mobileOpen = false, onClose }) {
           </div>
         </div>
       </aside>
+
+      <PasswordModal open={pwOpen} onClose={() => setPwOpen(false)} />
 
       <SettingsModal
         open={settingsOpen}
